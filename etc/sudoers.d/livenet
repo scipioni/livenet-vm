@@ -1,0 +1,2 @@
+livenet ALL=(ALL:ALL) NOPASSWD: /usr/bin/killall pulseaudio
+%vboxusers ALL=(ALL:ALL) NOPASSWD: /bin/chown -R [a-zA-Z0-9]* /vms/[a-zA-Z0-9]* 

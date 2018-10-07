@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=rollback
+Comment=Macchina Virtuale
+Exec=ln-vm --path %k --rollback
+Type=Application
+Categories=GTK;GNOME;Utility;
+Terminal=false
+Icon=/usr/share/icons/vm-warn.png
+

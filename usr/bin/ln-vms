@@ -1,0 +1,172 @@
+#!/bin/bash
+
+vmlauncher=ln-vm
+
+FLAGLONGOP=/tmp/.vms_sync
+
+. /etc/livenet/livenet.conf
+for CONFIG_FILE in vms.conf /etc/livenet/vms.conf; do
+    [ -f ${CONFIG_FILE} ] && break
+done
+
+function do_help {
+cat <<EOF
+
+$0 [-h] [-r] [--sync /path/to/vm] [-g]
+
+--help,-h: help
+--list: list vm
+--vm <vm> [--xsession] [--run | --guest | --rdp]
+EOF
+}
+
+function do_parse() {
+    SECTION=$1
+    unset name master update local
+    eval $( sed -e 's/[[:space:]]*\=[[:space:]]*/=/g' \
+        -e 's/;.*$//' \
+        -e 's/[[:space:]]*$//' \
+        -e 's/^[[:space:]]*//' \
+        -e "s/^\(.*\)=\([^\"']*\)$/\1=\"\2\"/" \
+       < $CONFIG_FILE \
+        | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
+}
+
+function do_sync() {
+    SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
+    for SECTION in ${SECTIONS}; do
+        do_parse ${SECTION}
+        [ "${update}" = "true" ] || continue
+        [ -n "${local}" ] || continue
+
+        if [ -n "${master}" ] && [ -d ${master} ]; then
+            mkdir -p ${local}
+            cd ${local}
+            nice ln-vm --sync ${master}
+        fi
+    done
+}
+
+function do_list() {
+    SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
+    for SECTION in ${SECTIONS}; do
+        echo "[${SECTION}]"
+        do_parse ${SECTION}
+        echo "  name=${name} master=${master} local=${local} update=${update}"
+        echo
+    done
+}
+
+function do_run() {
+    options="$*"
+    echo "running $name"
+    cd ${local}
+    if [ $? != 0 ]; then
+        echo "ERROR: no $local or ${master} found"
+    fi 
+    ${vmlauncher} ${options}
+}
+
+PROGNAME=${0##*/}
+PROGVERSION=0.1.0
+SHORTOPTS="h"
+LONGOPTS="help,list,vm:,run,guest,xsession,sync,rdp,headless"
+
+ARGS=$(getopt -s bash --options $SHORTOPTS --longoptions $LONGOPTS --name $PROGNAME -- "$@" )
+if [ $? -ne 0 ]; then
+    # bad argument
+    exit 1
+fi
+eval set -- "$ARGS"
+
+while true; do
+   case $1 in
+    -h|--help)
+        do_help
+        exit 0
+        ;;
+    --list)
+        do_list
+        exit 0
+        ;;
+    --sync)
+        touch ${FLAGLONGOP}
+        ( do_sync ; rm -f ${FLAGLONGOP} ) &
+    
+        sleep 5
+
+        # long sync, switch to session-wait
+        if [ -f ${FLAGLONGOP} ]; then
+            update-alternatives --set lightdm.conf /etc/lightdm/lightdm.conf.nfs.special
+            service lightdm restart
+
+            while [ 1 ]; do
+                sleep 5
+                [ -f ${FLAG} ] && continue # until sync running
+                
+                # activate normal login
+                do_update_alternatives /etc/lightdm/lightdm.conf
+                service lightdm restart
+                break
+            done
+        fi
+
+        exit 0
+        ;;
+    --vm)
+        shift
+        name=$1
+        ;;
+    --run)
+        [ -n "${name}" ] || break
+        do_parse "${name}"
+        ;;
+    --guest)
+        [ -n "${name}" ] || break
+        do_parse "${name}"
+        OPTIONS="${OPTIONS} --fullscreen --guest --spice"
+        XSESSION=true
+        ;;
+    --headless)
+        [ -n "${name}" ] || break
+        do_parse "${name}"
+        OPTIONS="${OPTIONS} --guest --headless"
+        XSESSION=false
+        ;;
+    --rdp)
+        [ -n "${name}" ] || break
+        do_parse "${name}"
+        OPTIONS="${OPTIONS} --rdp"
+        RDP=true
+        ;;
+    --xsession)
+        XSESSION=true
+        ;;
+    *)
+        shift
+        break
+        ;;
+   esac
+   shift
+done
+    
+
+if [ -n "${XSESSION}" ]; then
+    ratpoison -f /etc/ratpoisonrc &
+    wmpid=$!
+    if [ -n "${RDP}" ]; then
+        do_setbg
+        for i in $( seq 10 10 100 ); do
+            sleep 2
+            echo $i
+        done | zenity --progress --no-cancel --auto-close --width 400 --text "Attendere ..." &
+    fi
+
+    ( do_run ${OPTIONS} ; killall ratpoison ) &
+    wait $wmpid # wait until ratpoison is closed after do_run
+else
+    do_run ${OPTIONS}
+fi
+
+
+
