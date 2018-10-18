@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# TODO
-# qemu-system-x86_64 -machine type=pc,accel=kvm -cpu host -boot d -m 1024 -net user,smb={my home folder} -net nic,model=virtio -rtc base=localtime -drive file=XP.qcow2,if=virtio -spice port=5900,disable-ticketing,image-compression=off,jpeg-wan-compression=never,zlib-glz-wan-compression=never,playback-compression=off -vga qxl -global qxl-vga.vram_size=67108864 -device virtio-serial-pci -device virtserialport,chardev=spicechannel0,name=com.redhat.spice.0 -chardev spicevmc,id=spicechannel0,name=vdagent -balloon virtio
-
-## not edit ########
 FLAG_DATE=/tmp/.flag_newer.$$
 
 # good performance and safe on master
@@ -49,30 +45,36 @@ cat <<EOF
 
 $0 [-h] [-r] [--sync /path/to/vm] [-g]
 
---help,-h: help
+--help,-h: show this help
+
 --sync,-s: sync from other vm
 --commit,-c: commit
 --rollback: rollback
 --compact: compact image file
---xnest: before --read-only run client in xnest
---rdp: start vm in safe read only mode and run RDP client
---compact: compact image
+--pull: TODO get latest vm image for profile
+--push: TODO push this vm to server
 --force-sync: force sync of entire image of remote clients
---cdrom: path of iso
---floppy: path of floppy
---vgastd: use vga std driver instead of vmware
---client PID_VM: run RDP client 
---check: show host RAM,CPU,...
---splash: show plymouth splash (called by --read-only mode)
---usbdevice <vendorID:productID>
+
 --guest: run in readonly mode
 --path: specify vm path. If not specified current dir is used.
---qed <size>: create qed image named tmp.img 
 --permissions: update for safer permissions on vm files
+
+--xnest: before --read-only run client in xnest
+--rdp: start vm in safe read only mode and run RDP client
+
+--cdrom: path of iso
+--floppy: path of floppy
+
+--vgastd: use vga std driver instead of vmware
+--client PID_VM: run RDP client 
+--splash: show plymouth splash (called by --read-only mode)
+--usbdevice <vendorID:productID>
+
 --spice: run spice GUI
 --sdl: run sdl GUI
 --fullscreen: run client GUI in fullscreen mode
---seamless: seamless mode without desktop (only in virtualbox machine)
+
+--check: show host RAM,CPU,...
 
 Admin on master vm:
 0) SO is in good state 
@@ -150,31 +152,7 @@ function set_params_kvm() {
     VM_IMG=${CURRENT}/vm.img
     SESSION_IMG=${CURRENT}/.session.img
     VM_OPTIONS=""
-    VM_OPTIONS_VBOX=""
     update_vm_date
-}
-
-function set_params_vbox() {
-    VM_IMG=${CURRENT}/vm.img
-    SESSION_IMG=$(find ${CURRENT}/Snapshots/ -name "*.vdi" 2>/dev/null | head -n1)
-    VM_OPTIONS=""
-    VM_OPTIONS_VBOX=""
-    export VBOX_USER_HOME=${CURRENT}
-
-    if [ -n ${USER} ]; then
-        sudo chown -R ${USER} ${CURRENT}
-        if [ $? != 0 ]; then
-            echo "add this row to sudoers"
-            echo "%vboxusers ALL=(ALL:ALL) NOPASSWD: /bin/chown -R [a-zA-Z0-9]* /vms/[a-zA-Z0-9]*" 
-            exit 1
-        fi
-    fi
-
-    update_vm_date
-    sed -i 's|defaultMachineFolder=.[^\"]*|defaultMachineFolder="'${CURRENT}'|' ${CURRENT}/VirtualBox.xml
-
-    # update sharedfolder home
-    sed -i 's|\(<SharedFolder name="home" hostPath="\)[^\"]*|\1'${HOME}'|' ${CURRENT}/vm.vbox
 }
 
 function set_params() {
@@ -217,19 +195,6 @@ function do_compact_kvm() {
     fi
 }
 
-function do_compact_vbox() {
-    echo "Compact vbox "$( du -h ${VM_IMG} )
-    VBoxManage modifyhd ${VM_IMG} --compact 
-    if [ $? = 0 ]; then
-        echo $( du -h ${VM_IMG} )
-    fi
-}
-
-function do_create_qed() {
-    IMAGE_NAME=$1
-    IMAGE_SIZE=$2
-    qemu-img create -f qed -o cluster_size=65536,table_size=0 ${IMAGE_NAME} ${IMAGE_SIZE}
-}
 
 function do_commit_kvm() {
     echo -n "Commit ..."
@@ -257,55 +222,8 @@ function do_commit_kvm() {
     du -h ${NEW_SESSION}.gz
 }
 
-function do_commit_vbox() {
-    echo -n "Commit ..."
-    if [ ! -f "${SESSION_IMG}" ]; then
-        echo "nothing to do"
-        return 0
-    fi
 
-    VBoxManage showvminfo vm | grep -q ": base"
-    if [ $? != 0 ]; then
-        echo "no snapshot available"
-        return 0
-    fi
-
-    SESSION_DATE=$(date +"%Y%m%d%H%M.%S")
-    NEW_SESSION=${CURRENT}/sessions/${SESSION_DATE}.img
     
-    mkdir -p ${CURRENT}/sessions
-    pigz < ${SESSION_IMG} > ${NEW_SESSION}.gz
-
-    VBoxManage snapshot vm delete base 2>/dev/null
-    if [ $? != 0 ]; then
-        echo "Failed"
-        rm -f ${NEW_SESSION}.gz
-        exit 1
-    fi
-    rm -f ${SESSION_IMG}
-    touch ${NEW_SESSION}.gz -t ${SESSION_DATE}
-    du -h ${NEW_SESSION}.gz
-}
-
-function do_copy() {
-    VM_MAIN=$1
-    begin_long_operation
-    nice cp -p ${VM_MAIN}/vm.img ${VM_IMG}
-    nice cp -p ${VM_MAIN}/vm?*.img ${VM_IMG} 2>/dev/null
-    [ -d ${VM_MAIN}/.bios ] && nice cp -rup ${VM_MAIN}/.bios ${CURRENT}
-    for f in vm.vbox xpti.dat VirtualBox.xml compreg.dat; do
-        [ -f ${VM_MAIN}/${f} ] && cp -rup ${VM_MAIN}/${f} ${CURRENT}
-    done
-    [ -d ${VM_MAIN}/Snapshots ] && cp -rup ${VM_MAIN}/Snapshots ${CURRENT}
-    cp -rup ${VM_MAIN}/.client-test.desktop ${CURRENT}/client-test.desktop 2>/dev/null && chmod +x ${CURRENT}/*.desktop
-    cp -rup ${VM_MAIN}/.client-sync.desktop ${CURRENT}/client-sync.desktop 2>/dev/null && chmod +x ${CURRENT}/*.desktop
-    cp -rup ${VM_MAIN}/.config ${CURRENT} 
-    cp -rup ${VM_MAIN}/.setup ${CURRENT} 
-    [ -f ${VM_MAIN}/.ich9-ehci-uhci.cfg ] && cp -rup ${VM_MAIN}/.ich9-ehci-uhci.cfg ${CURRENT} 
-    update_vm_date
-    end_long_operation
-}
-            
 
 function do_subcommit_kvm() {
     qemu-img rebase -u -b ${VM_IMG} ${SESSION_IMG}
@@ -316,62 +234,7 @@ function do_subcommit_kvm() {
     return ${RESULT}
 }
 
-function do_subcommit_vbox() {
-    mkdir -p ${CURRENT}/Snapshots
-    VBoxManage snapshot vm take base 2>/dev/null
-    UUID=$(find ${CURRENT}/Snapshots/ -name "*.vdi" 2>/dev/null | head -n1)
-    UUID=$(basename ${UUID})
-    UUID=${UUID%.vdi}
-    echo "UUID=$UUID" 
-    rm -fR ${CURRENT}/Snapshots/*
-    mv ${SESSION_IMG} Snapshots/${UUID}.vdi
 
-    # change vdi uuid
-    python <<EOF
-
-# thanks to http://www.finefrog.com/2011/08/03/setting-the-uuid-of-a-virtualbox-vdi/
-newUuid = "${UUID}".replace('-', '').replace('{', '').replace('}', '')
-vdi="Snapshots/${UUID}.vdi"
-
-import binascii
-import struct
-import os
-
-file = open(vdi, 'r+b')
-file.seek(392, os.SEEK_SET)
-
-file.write(binascii.a2b_hex(newUuid[6] + newUuid[7]))
-file.write(binascii.a2b_hex(newUuid[4] + newUuid[5]))
-file.write(binascii.a2b_hex(newUuid[2] + newUuid[3]))
-file.write(binascii.a2b_hex(newUuid[0] + newUuid[1]))
-
-file.write(binascii.a2b_hex(newUuid[10] + newUuid[11]))
-file.write(binascii.a2b_hex(newUuid[8] + newUuid[9]))
-
-file.write(binascii.a2b_hex(newUuid[14] + newUuid[15]))
-file.write(binascii.a2b_hex(newUuid[12] + newUuid[13]))
-
-file.write(binascii.a2b_hex(newUuid[16] + newUuid[17]))
-file.write(binascii.a2b_hex(newUuid[18] + newUuid[19]))
-
-file.write(binascii.a2b_hex(newUuid[20] + newUuid[21]))
-file.write(binascii.a2b_hex(newUuid[22] + newUuid[23]))
-file.write(binascii.a2b_hex(newUuid[24] + newUuid[25]))
-file.write(binascii.a2b_hex(newUuid[26] + newUuid[27]))
-file.write(binascii.a2b_hex(newUuid[28] + newUuid[29]))
-file.write(binascii.a2b_hex(newUuid[30] + newUuid[31]))
-
-file.close()
-
-EOF
-    
-    VBoxManage snapshot vm delete base >/dev/null 2>&1
-    RESULT=$?
-
-    rm -f ${CURRENT}/Snapshots/*
-    touch ${VM_IMG} -t ${SESSION_DATE}
-    return ${RESULT}
-}
 
 function do_sync() {
     VM_MAIN=${1%/}
@@ -436,15 +299,10 @@ function do_sync() {
     return 10 # no more updates
 }
 
-function do_rollback_kvm() {
+function do_rollback() {
     echo -n "Rollback kvm ..."
-    rm -f ${SESSION_IMG}
-}
-
-function do_rollback_vbox() {
-    echo -n "Rollback vbox ..."
-    VBoxManage snapshot vm restore base >/dev/null 2>&1
-    VBoxManage snapshot vm delete base >/dev/null 2>&1
+    LAST_SNAP=$(zfs list -t snapshot | grep vm | tail -1)
+    zfs rollback ${LAST_SNAP}
 }
 
 function do_client_call() {
@@ -628,13 +486,12 @@ function do_start_kvm() {
 
     i=1
     KVM_DISKS=""
-    for vm_disk in ${CURRENT}/vm?*.img; do
+    for vm_disk in $(ls ${CURRENT}/vm*.img); do
         [ -f ${vm_disk} ] || continue
-        KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qed,cache=writeback,aio=native,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
+        KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=raw,cache=writeback,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
         KVM_DISKS_LOG=" ${vm_disk}"
         i=$(($i+1))
     done
-
     if [ -f ${CURRENT}/.ich9-ehci-uhci.cfg ]; then
         USB2="-readconfig ${CURRENT}/.ich9-ehci-uhci.cfg"
     fi
@@ -662,36 +519,29 @@ function do_start_kvm() {
     audio_on
 
     echo "Starting kvm with RAM=${RAM}MB, CPU=${SMP}, SOUND=${KVM_SOUND} DISKS='vm.img${KVM_DISKS_LOG}' GUI=${GUI} SHARE=${SHARE}"
-
+    ln-network
+    #TODO improve
+    ln-vm --rollback
     kvm \
         -name vm \
         -usb ${USB2} ${TABLET} \
         -machine pc,accel=kvm:tcg \
-        -L ${CURRENT}/.bios \
         -m ${RAM} \
-        -smp ${SMP} \
-        -cpu ${CPU} \
+        -cpu core2duo \
         -nodefaults -rtc base=localtime \
-        -drive file=${SESSION_IMG},if=none,id=virtio-disk0,format=qed,cache=${CACHE},aio=native,werror=ignore,rerror=ignore \
-        -device virtio-blk-pci,scsi=off,drive=virtio-disk0,id=disk0 \
         ${KVM_DISKS} \
-        -drive if=none,media=cdrom,id=drive-ide0-1-0,readonly=on,format=raw${CDROM} ${FLOPPY}\
-        -device ide-drive,bus=ide.1,unit=0,drive=drive-ide0-1-0,id=ide0-1-0 \
-        -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
-        -chardev pty,id=charserial0 -device isa-serial,chardev=charserial0,id=serial0 \
         -vga ${VGA} \
         -k ${XKBLAYOUT:=it} \
-        -redir tcp:3389::3389 \
         -monitor tcp:127.0.0.1:4444,server,nowait \
         -boot d \
         ${GUIOPTS} \
         ${KVM_SOUND} \
         ${USBDEVICES} \
         ${KVM_OPTIONS} \
+        -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
         ${VM_OPTIONS} &
     PID_VM=$!
     echo "PID of VM:${PID_VM}"
-
     if [ -n "${SHARE2}" ] && [ -d ${SHARE2} ]; then
         ( sleep 2 && export_share ${PID_VM} ${SHARE2} ) &
     fi
@@ -714,73 +564,6 @@ function do_start_kvm() {
     wait ${PID_VM}
 }
 
-
-function do_start_vbox() {
-    if [ ! -f ${VM_IMG} ]; then
-        echo "ERROR: no ${VM_IMG}"
-        exit 1
-    fi
-    
-    if [ -f ${DIRTY_FLAG} ]; then
-        echo "ERROR: dirty ${VM_IMG}"
-        exit 1
-    fi
-
-    if [ ! -f "${SESSION_IMG}" ]; then
-        echo -n "Starting new vbox session ..."
-        VBoxManage snapshot vm take base 2>/dev/null
-        echo "OK"
-    else
-        echo "Resume session"
-    fi
-
-    [ -n "${SMP}" ] || SMP=$(( 1+$( egrep "^processor" /proc/cpuinfo | wc -l )/2 ))
-
-    if [ -z "${RAM}" ]; then
-        RAM=$(( $( sed -n "s|^MemTotal:\s*\([0-9]*\).*$|\1|p"  /proc/meminfo )/1024/2 ))
-        if [ ${RAM} -gt 2047 ]; then
-            RAM=2047
-        fi
-    fi
-
-    echo "Starting vbox with RAM=${RAM}MB, CPU=${SMP}"
-    sed -i 's| RAMSize=.[^\"]*| RAMSize="'${RAM}'|' ${CURRENT}/vm.vbox
-    sed -i 's|CPU count=.[^\"]*|CPU count="'${SMP}'|' ${CURRENT}/vm.vbox
-
-    rm -f ${CURRENT}/*.log*
-    rm -fR ${CURRENT}/Logs
-
-    if [ "${CLIENT_CALL}" = "true" ]; then
-        VBoxHeadless ${VM_OPTIONS_VBOX} --startvm vm &
-    else
-        if [ "${SEAMLESSMODE}" = "true" ]; then
-            gui_wait ${GUI_DELAY} &
-            VBoxManage startvm vm 
-            i=0
-            while [ $i -le 5 ]; do # minimize splash screen
-                echo search
-                WID=$(xdotool search "VM VirtualBox")
-                if [ -n "${WID}" ]; then
-                    xdotool windowunmap  ${WID}
-                    break
-                fi
-                i=$((i+1))
-                sleep 0.1
-            done
-
-            return
-        else
-            VBoxSDL ${VM_OPTIONS_VBOX} -vm vm &
-        fi
-    fi
-    
-    PID_VM=$!
-    echo "PID of VM:${PID_VM}"
-
-    [ -n "${CLIENT_CALL}" ] && do_client_call ${PID_VM}
-
-    wait ${PID_VM}
-}
 
 PROGNAME=${0##*/}
 PROGVERSION=0.1.0
@@ -839,7 +622,7 @@ while true; do
         ;;
     --rollback)
         gui_start
-        do_rollback_${VM_TYPE}
+        do_rollback
         gui_log "roolback"
         gui_stop
         exit 0
@@ -914,17 +697,10 @@ while true; do
         ;;
     --path)
         shift
+        set -x
         CURRENT=$1
         [ -d ${CURRENT} ] || CURRENT=$(dirname ${CURRENT})
         set_params
-        ;;
-    --qed)
-        IMAGE_NAME=tmp.img
-        shift
-        IMAGE_SIZE=$1
-        do_create_qed ${IMAGE_NAME} ${IMAGE_SIZE} 
-        echo "Image ${IMAGE_NAME} ready, maybe you have to rename it in vm.img"
-        exit 0
         ;;
     *)
         shift
@@ -934,5 +710,5 @@ while true; do
    shift
 done
 
-do_start_${VM_TYPE}
+do_start_kvm
 exit 0
