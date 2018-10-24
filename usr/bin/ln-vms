@@ -1,13 +1,14 @@
 #!/bin/bash
 
+# In this script you can find a set of utilities fo ln-vm.
+# Get update for all vms
+# Get vm for all section defined in vms.conf
+
+#the name of vm launcher
 vmlauncher=ln-vm
 
-FLAGLONGOP=/tmp/.vms_sync
-
+#define in livenet.conf the path of server sharing
 . /etc/livenet/livenet.conf
-for CONFIG_FILE in vms.conf /etc/livenet/vms.conf; do
-    [ -f ${CONFIG_FILE} ] && break
-done
 
 function do_help {
 cat <<EOF
@@ -20,6 +21,9 @@ $0 [-h] [-r] [--sync /path/to/vm] [-g]
 EOF
 }
 
+# all vms need some variables: name [STRING], master [PATH], update [BOOLEAN] and local [PATH]
+# for every section defined in vms.conf, initialize the variables with function do_parse
+# every section need a name between square []
 function do_parse() {
     SECTION=$1
     unset name master update local
@@ -32,6 +36,7 @@ function do_parse() {
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
 }
 
+# get all update for every VM 
 function do_sync() {
     SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
     for SECTION in ${SECTIONS}; do
@@ -42,6 +47,7 @@ function do_sync() {
         if [ -n "${master}" ] && [ -d ${master} ]; then
             mkdir -p ${local}
             cd ${local}
+            LIVENET_ROOT
             nice ln-vm --sync ${master}
         fi
     done
@@ -55,6 +61,12 @@ function do_list() {
         echo "  name=${name} master=${master} local=${local} update=${update}"
         echo
     done
+}
+
+#download all updates
+function pull_updates(){
+    
+
 }
 
 function do_run() {
@@ -90,9 +102,8 @@ while true; do
         exit 0
         ;;
     --sync)
-        touch ${FLAGLONGOP}
+       touch ${FLAGLONGOP}
         ( do_sync ; rm -f ${FLAGLONGOP} ) &
-    
         sleep 5
 
         # long sync, switch to session-wait
@@ -110,7 +121,6 @@ while true; do
                 break
             done
         fi
-
         exit 0
         ;;
     --vm)

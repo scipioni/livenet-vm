@@ -492,6 +492,7 @@ function do_start_kvm() {
         KVM_DISKS_LOG=" ${vm_disk}"
         i=$(($i+1))
     done
+
     if [ -f ${CURRENT}/.ich9-ehci-uhci.cfg ]; then
         USB2="-readconfig ${CURRENT}/.ich9-ehci-uhci.cfg"
     fi
@@ -519,9 +520,12 @@ function do_start_kvm() {
     audio_on
 
     echo "Starting kvm with RAM=${RAM}MB, CPU=${SMP}, SOUND=${KVM_SOUND} DISKS='vm.img${KVM_DISKS_LOG}' GUI=${GUI} SHARE=${SHARE}"
-    ln-network
+    #ln-network
     #TODO improve
-    ln-vm --rollback
+    #ln-vm --rollback
+    HDD=/dev/zvol/zfs-pool/kvm/win10
+        
+#${KVM_DISKS} \
     kvm \
         -name vm \
         -usb ${USB2} ${TABLET} \
@@ -529,7 +533,7 @@ function do_start_kvm() {
         -m ${RAM} \
         -cpu core2duo \
         -nodefaults -rtc base=localtime \
-        ${KVM_DISKS} \
+        -drive file=$HDD,if=virtio,index=0 \
         -vga ${VGA} \
         -k ${XKBLAYOUT:=it} \
         -monitor tcp:127.0.0.1:4444,server,nowait \

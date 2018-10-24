@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync and download in background the vm and updates
+ConditionPathExists=!/ro/usr
+After= network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ln-vms --sync
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
