@@ -24,6 +24,16 @@ EOF
 # all vms need some variables: name [STRING], master [PATH], update [BOOLEAN] and local [PATH]
 # for every section defined in vms.conf, initialize the variables with function do_parse
 # every section need a name between square []
+
+#if there are some vms for livenet image download and install
+get_vms(){
+    #prepare zvol
+    mount -t nfs $LIVENET_ROOT:/livenet/vms /mnt 
+    #get name of image
+    IMAGE=$(mount | grep rpool/ROOT | awk '{print $1}' | cut -d '/' -f 3)
+    for i in (cat /etc/livenet/vms)
+    SIZE=$(du -sh ${VM}_${i} | awk '{print $1}' | sed 's/[^0-9]*//g')
+}
 function do_parse() {
     SECTION=$1
     unset name master update local
