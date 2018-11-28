@@ -465,7 +465,11 @@ done
 
 
 function do_start_kvm() {
+    #clean ram
+    ln-client --ram-flush
+    #rollback to latest commit
     do_rollback
+    
     if [ ! -f ${VM_IMG} ]; then
         echo "ERROR: no ${VM_IMG}"
         exit 1
