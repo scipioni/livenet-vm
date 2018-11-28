@@ -26,14 +26,6 @@ EOF
 # every section need a name between square []
 
 #if there are some vms for livenet image download and install
-get_vms(){
-    #prepare zvol
-    mount -t nfs $LIVENET_ROOT:/livenet/vms /mnt 
-    #get name of image
-    IMAGE=$(mount | grep rpool/ROOT | awk '{print $1}' | cut -d '/' -f 3)
-    for i in (cat /etc/livenet/vms)
-    SIZE=$(du -sh ${VM}_${i} | awk '{print $1}' | sed 's/[^0-9]*//g')
-}
 function do_parse() {
     SECTION=$1
     unset name master update local
@@ -74,18 +66,19 @@ function do_list() {
 }
 
 #download all updates
-function pull_updates(){
-    
-
-}
 
 function do_run() {
     options="$*"
     echo "running $name"
-    cd ${local}
+    export local
+    export master
+    export name
+    ls ${local}
     if [ $? != 0 ]; then
         echo "ERROR: no $local or ${master} found"
     fi 
+    echo $options
+    echo $name $master $local $update
     ${vmlauncher} ${options}
 }
 
@@ -124,7 +117,7 @@ while true; do
             while [ 1 ]; do
                 sleep 5
                 [ -f ${FLAG} ] && continue # until sync running
-                
+
                 # activate normal login
                 do_update_alternatives /etc/lightdm/lightdm.conf
                 service lightdm restart
@@ -136,6 +129,8 @@ while true; do
     --vm)
         shift
         name=$1
+	echo $name
+        echo $CONFIG_FILE
         ;;
     --run)
         [ -n "${name}" ] || break
@@ -187,6 +182,3 @@ if [ -n "${XSESSION}" ]; then
 else
     do_run ${OPTIONS}
 fi
-
-
-

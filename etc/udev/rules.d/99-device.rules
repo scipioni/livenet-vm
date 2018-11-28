@@ -1,0 +1,1 @@
+KERNEL=="zd*", OWNER="livenet", GROUP="domusers"

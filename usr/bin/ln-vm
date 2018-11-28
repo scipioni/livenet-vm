@@ -35,6 +35,9 @@ RDESKTOP_OPTS="-E -f -a 16 -u user -p user -r sound:local"
 WIN_WIDTH=1024
 WIN_HEIGHT=768
 
+echo $name $master $local
+DSK=$(readlink -f $local | cut -d "/" -f 3)
+
 ####################
 
 # for keymap XKBLAYOUT
@@ -149,10 +152,12 @@ function update_vm_date() {
 
 
 function set_params_kvm() {
-    VM_IMG=${CURRENT}/vm.img
-    SESSION_IMG=${CURRENT}/.session.img
+#    VM_IMG=${CURRENT}/vm.img
+ #   SESSION_IMG=${CURRENT}/.session.img
+    VM_IMG=
+    SESSION_IMG=
     VM_OPTIONS=""
-    update_vm_date
+    #update_vm_date
 }
 
 function set_params() {
@@ -197,42 +202,33 @@ function do_compact_kvm() {
 
 
 function do_commit_kvm() {
+    VM=$1
     echo -n "Commit ..."
-    if [ ! -f ${SESSION_IMG} ]; then
-        echo "nothing to do"
-        return 0
-    fi
+    #if [ ! -f ${SESSION_IMG} ]; then
+    #    echo "nothing to do"
+    #    return 0
+    #fi
 
     SESSION_DATE=$(date +"%Y%m%d%H%M.%S")
-    NEW_SESSION=${CURRENT}/sessions/${SESSION_DATE}.img
-    
-    mkdir -p ${CURRENT}/sessions
-    pigz < ${SESSION_IMG} > ${NEW_SESSION}.gz
+    echo "create snapshot $SESSION_DATE of $VM"
+    zfs snapshot rpool/vms/$VM@$SESSION_DATE
+    echo "zfs snapshot rpool/vms/$VM@$SESSION_DATE"
 
-    qemu-img commit ${SESSION_IMG} 
-    if [ $? != 0 ]; then
-        gui_log "Failed"
-        rm -f ${NEW_SESSION}.gz
-        exit 1
-    else
-        gui_log "committed ${SESSION_DATE}"
-    fi
-    rm -f ${SESSION_IMG}
-    touch ${NEW_SESSION}.gz -t ${SESSION_DATE}
-    du -h ${NEW_SESSION}.gz
+
+
 }
 
 
     
 
-function do_subcommit_kvm() {
-    qemu-img rebase -u -b ${VM_IMG} ${SESSION_IMG}
-    nice qemu-img commit ${SESSION_IMG}
-    RESULT=$?
-    rm -f ${SESSION_IMG}
-    touch ${VM_IMG} -t ${SESSION_DATE}
-    return ${RESULT}
-}
+#function do_subcommit_kvm() {
+#    qemu-img rebase -u -b ${VM_IMG} ${SESSION_IMG}
+#    nice qemu-img commit ${SESSION_IMG}
+#    RESULT=$?
+#    rm -f ${SESSION_IMG}
+#    touch ${VM_IMG} -t ${SESSION_DATE}
+#    return ${RESULT}
+#}
 
 
 
@@ -301,7 +297,7 @@ function do_sync() {
 
 function do_rollback() {
     echo -n "Rollback kvm ..."
-    LAST_SNAP=$(zfs list -t snapshot | grep vm | tail -1)
+    LAST_SNAP=$(zfs list -t snapshot -o name | grep vm | tail -1)
     zfs rollback ${LAST_SNAP}
 }
 
@@ -445,7 +441,31 @@ function audio_on() {
     set -e
 }
 
+function do_wait_kill() {
+FILE=$HOME/flag_shutdown
+PID_KVM=$(pgrep -l kvm | cut -d "/"  -f 2)
+
+while [ 1 ]
+do
+if [ -f $FILE ]
+then
+	kill -9 $PID_KVM
+	echo "vm uccisa $PID_KVM" >> /tmp/test
+        sleep 2
+	rm $FILE
+	exit 0
+
+else
+	sleep 2
+fi
+done
+
+
+}
+
+
 function do_start_kvm() {
+    do_rollback
     if [ ! -f ${VM_IMG} ]; then
         echo "ERROR: no ${VM_IMG}"
         exit 1
@@ -523,17 +543,17 @@ function do_start_kvm() {
     #ln-network
     #TODO improve
     #ln-vm --rollback
-    HDD=/dev/zvol/zfs-pool/kvm/win10
-        
+#    HDD=/dev/zvol/zfs-pool/kvm/win10
+     HDD=/dev/$DSK
 #${KVM_DISKS} \
     kvm \
         -name vm \
         -usb ${USB2} ${TABLET} \
         -machine pc,accel=kvm:tcg \
         -m ${RAM} \
-        -cpu core2duo \
+        -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
         -nodefaults -rtc base=localtime \
-        -drive file=$HDD,if=virtio,index=0 \
+        -drive file=$HDD,if=virtio,index=0,cache=none\
         -vga ${VGA} \
         -k ${XKBLAYOUT:=it} \
         -monitor tcp:127.0.0.1:4444,server,nowait \
@@ -545,7 +565,10 @@ function do_start_kvm() {
         -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
         ${VM_OPTIONS} &
     PID_VM=$!
-    echo "PID of VM:${PID_VM}"
+
+    check.sh &
+    P1=$! 
+#    echo "PID of VM:${PID_VM}"
     if [ -n "${SHARE2}" ] && [ -d ${SHARE2} ]; then
         ( sleep 2 && export_share ${PID_VM} ${SHARE2} ) &
     fi
@@ -554,8 +577,11 @@ function do_start_kvm() {
         OPTS=""
         [ "${FULLSCREEN}" = "true" ] && OPTS="${OPTS} --full-screen=auto-conf"
         gui_wait ${GUI_DELAY}
-        ( sleep ${GUI_DELAY} && spicec -h localhost -p ${SPICE_PORT} ${OPTS} ; do_shutdown ${PID_VM} ) &
+        ( sleep ${GUI_DELAY} && spicy -h localhost -p ${SPICE_PORT} ${OPTS} ; do_shutdown ${PID_VM} ) &
     fi
+
+#    do_wait_kill
+
 
     if [ -n "${CLIENT_CALL}" ]; then
         do_client_call ${PID_VM}
@@ -565,8 +591,13 @@ function do_start_kvm() {
         #( sleep 10 && ( echo "sendkeys ctrl-alt-u" | nc localhost ${MONITOR_PORT} -w1 ) ) &
     fi
 
-    wait ${PID_VM}
+    wait ${PID_VM} ${P1}
+
+
 }
+
+
+
 
 
 PROGNAME=${0##*/}
@@ -585,7 +616,8 @@ set_params
 while true; do
    case $1 in
     -h|--help)
-        do_help
+        #do_help
+        echo $PID_VM
         exit 0
         ;;
     -s|--sync)
@@ -625,16 +657,19 @@ while true; do
         exit 0
         ;;
     --rollback)
-        gui_start
+        #gui_start
         do_rollback
-        gui_log "roolback"
-        gui_stop
+      #  gui_log "roolback"
+        #gui_stop
         exit 0
         ;;
     --commit)
-        gui_start "commit"
-        do_commit_${VM_TYPE}
-        gui_stop
+        shift
+        shift
+	NAME=$1
+       # gui_start "commit"
+        do_commit_kvm $NAME
+        #gui_stop
         exit 0
         ;;
     --permissions)
@@ -712,7 +747,9 @@ while true; do
         ;;
    esac
    shift
-done
 
+
+done
 do_start_kvm
+
 exit 0
