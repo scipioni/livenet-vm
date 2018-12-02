@@ -26,6 +26,7 @@ EOF
 # every section need a name between square []
 
 #if there are some vms for livenet image download and install
+set -x
 function do_parse() {
     SECTION=$1
     unset name master update local
@@ -36,6 +37,7 @@ function do_parse() {
         -e "s/^\(.*\)=\([^\"']*\)$/\1=\"\2\"/" \
        < $CONFIG_FILE \
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
+
 }
 
 # get all update for every VM 
@@ -60,16 +62,15 @@ function do_list() {
     for SECTION in ${SECTIONS}; do
         echo "[${SECTION}]"
         do_parse ${SECTION}
-        echo "  name=${name} master=${master} local=${local} update=${update}"
-        echo
+        echo "  name=${name} master=${master} local=${local} update=${update}"  
     done
 }
 
 #download all updates
-
 function do_run() {
     options="$*"
-    echo "running $name"
+    do_parse $name
+    echo "running $name $master $local"
     export local
     export master
     export name
@@ -77,8 +78,6 @@ function do_run() {
     if [ $? != 0 ]; then
         echo "ERROR: no $local or ${master} found"
     fi 
-    echo $options
-    echo $name $master $local $update
     ${vmlauncher} ${options}
 }
 
@@ -129,8 +128,6 @@ while true; do
     --vm)
         shift
         name=$1
-	echo $name
-        echo $CONFIG_FILE
         ;;
     --run)
         [ -n "${name}" ] || break
