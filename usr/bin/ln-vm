@@ -1,0 +1,938 @@
+#!/bin/bash
+
+# TODO
+# qemu-system-x86_64 -machine type=pc,accel=kvm -cpu host -boot d -m 1024 -net user,smb={my home folder} -net nic,model=virtio -rtc base=localtime -drive file=XP.qcow2,if=virtio -spice port=5900,disable-ticketing,image-compression=off,jpeg-wan-compression=never,zlib-glz-wan-compression=never,playback-compression=off -vga qxl -global qxl-vga.vram_size=67108864 -device virtio-serial-pci -device virtserialport,chardev=spicechannel0,name=com.redhat.spice.0 -chardev spicevmc,id=spicechannel0,name=vdagent -balloon virtio
+
+## not edit ########
+FLAG_DATE=/tmp/.flag_newer.$$
+
+# good performance and safe on master
+#CACHE=writeback
+
+# max performance on master
+CACHE=unsafe
+
+# max performance on client
+CACHE_CLIENT=unsafe
+
+GUI=sdl
+GUI_DELAY=10
+CDROM=",file=/dev/cdrom"
+FLOPPY=
+# if empty recalculated below 
+RAM=
+CPU=kvm32
+SMP=
+VGA=qxl
+GUEST_DISABLE=false
+TABLET="-device usb-tablet,bus=usb-bus.0,port=1,id=tablet"
+SPICE_PORT=5900
+SEAMLESSMODE=false
+
+# qemu
+export QEMU_AUDIO_DRV=pa
+#export QEMU_AUDIO_TIMER_PERIOD=0
+KVM_SOUND="-soundhw hda"
+MONITOR_PORT=4444
+
+RDESKTOP_OPTS="-E -f -a 16 -u user -p user -r sound:local"
+WIN_WIDTH=1024
+WIN_HEIGHT=768
+
+####################
+
+# for keymap XKBLAYOUT
+source /etc/default/keyboard
+
+function do_help {
+cat <<EOF
+
+$0 [-h] [-r] [--sync /path/to/vm] [-g]
+
+--help,-h: help
+--sync,-s: sync from other vm
+--commit,-c: commit
+--rollback: rollback
+--compact: compact image file
+--xnest: before --read-only run client in xnest
+--rdp: start vm in safe read only mode and run RDP client
+--compact: compact image
+--force-sync: force sync of entire image of remote clients
+--cdrom: path of iso
+--floppy: path of floppy
+--vgastd: use vga std driver instead of vmware
+--client PID_VM: run RDP client 
+--check: show host RAM,CPU,...
+--splash: show plymouth splash (called by --read-only mode)
+--usbdevice <vendorID:productID>
+--guest: run in readonly mode
+--path: specify vm path. If not specified current dir is used.
+--qed <size>: create qed image named tmp.img 
+--permissions: update for safer permissions on vm files
+--spice: run spice GUI
+--sdl: run sdl GUI
+--fullscreen: run client GUI in fullscreen mode
+--seamless: seamless mode without desktop (only in virtualbox machine)
+
+Admin on master vm:
+0) SO is in good state 
+1) start new session or resuming existing session: $0 
+2) ... make change to SO
+3) optionally: roolback to good state at 0) with $0 --rollback
+4) optionally: restart from 1)
+5) commit changes: $0 --commit
+6) optionally: force old slave to copy latest vm with $0 --force-sync
+
+Admin on slave vm: 
+1) update from master: $0 --sync /path/to/remote/vm
+
+Admin local debug:
+1) xnest with RDP read only mode: $0 --xnest --rdp
+
+Student on slave vm:
+1) safe read only mode: $0 --rdp
+
+EOF
+}
+
+function on_finish() {
+   rm -f ${FLAG_DATE}
+}
+
+trap on_finish EXIT
+trap on_finish SIGINT
+
+function gui_wait() {
+    DELAY=$1
+    for i in 1; do
+       sleep $DELAY
+       echo $i
+    done | zenity --progress --pulsate --no-cancel --auto-close --width 400 --title "Macchina Virtuale" --text "Attendere ..." &
+}
+
+function gui_start() {
+    [ -n "${DISPLAY}" ] || return
+    mkfifo /tmp/$$
+    zenity --progress --pulsate --no-cancel --width=400 --title="$1" < /tmp/$$ &
+    exec 5>/tmp/$$
+}
+
+function gui_log() {
+    echo $1
+    [ -n "${DISPLAY}" ] || return
+    echo "# "$1 >&5
+}
+
+function gui_step() {
+    [ -n "${DISPLAY}" ] || return
+    echo $1 >&5
+}
+
+function gui_stop() {
+    [ -n "${DISPLAY}" ] || return
+    echo 100 >&5
+    exec 5>&-
+    wait
+}
+
+function update_vm_date() {
+    [ -f ${VM_IMG} ] || return
+
+    TSTAMP=$(stat -c "%Y" ${VM_IMG})
+    TSTAMP=$(( $TSTAMP + 2 )) # soglia necessaria
+    VM_DATE=$( date +"%Y%m%d%H%M.%S" --date='@'${TSTAMP} )
+    umask 0002
+    touch ${FLAG_DATE} -t ${VM_DATE}
+}
+
+
+function set_params_kvm() {
+    VM_IMG=${CURRENT}/vm.img
+    SESSION_IMG=${CURRENT}/.session.img
+    VM_OPTIONS=""
+    VM_OPTIONS_VBOX=""
+    update_vm_date
+}
+
+function set_params_vbox() {
+    VM_IMG=${CURRENT}/vm.img
+    SESSION_IMG=$(find ${CURRENT}/Snapshots/ -name "*.vdi" 2>/dev/null | head -n1)
+    VM_OPTIONS=""
+    VM_OPTIONS_VBOX=""
+    export VBOX_USER_HOME=${CURRENT}
+
+    if [ -n ${USER} ]; then
+        sudo chown -R ${USER} ${CURRENT}
+        if [ $? != 0 ]; then
+            echo "add this row to sudoers"
+            echo "%vboxusers ALL=(ALL:ALL) NOPASSWD: /bin/chown -R [a-zA-Z0-9]* /vms/[a-zA-Z0-9]*" 
+            exit 1
+        fi
+    fi
+
+    update_vm_date
+    sed -i 's|defaultMachineFolder=.[^\"]*|defaultMachineFolder="'${CURRENT}'|' ${CURRENT}/VirtualBox.xml
+
+    # update sharedfolder home
+    sed -i 's|\(<SharedFolder name="home" hostPath="\)[^\"]*|\1'${HOME}'|' ${CURRENT}/vm.vbox
+}
+
+function set_params() {
+    [ -n "${CURRENT}" ] || CURRENT=$(pwd)
+    if [ -f ${CURRENT}/vm.vbox ]; then
+        VM_TYPE=vbox
+    else
+        VM_TYPE=kvm
+    fi
+    if [ -f ${CURRENT}/.setup ]; then
+        . ${CURRENT}/.setup
+    else
+        [ -f ${CURRENT}/.config ] && . ${CURRENT}/.config
+    fi
+    DIRTY_FLAG=${CURRENT}/.dirty
+    set_params_${VM_TYPE}
+}
+
+function begin_long_operation() {
+    touch ${DIRTY_FLAG}
+}
+
+function end_long_operation() {
+    rm -f ${DIRTY_FLAG}
+}
+
+function do_force_sync() {
+    FLAG=${CURRENT}/sessions/$(date +"%Y%m%d%H%M.%S").update
+    echo "Force update ${FLAG}"
+    touch ${FLAG}
+    touch ${VM_IMG} -r ${FLAG}
+}
+
+function do_compact_kvm() {
+    gui_log "Compact kvm from: "$( du -h ${VM_IMG} )
+    qemu-img convert -p -O qed -o cluster_size=65536 ${VM_IMG} ${VM_IMG}.tmp
+    if [ $? = 0 ]; then
+        mv ${VM_IMG}.tmp ${VM_IMG}
+        gui_log "Final size: "$( du -h ${VM_IMG} )
+    fi
+}
+
+function do_compact_vbox() {
+    echo "Compact vbox "$( du -h ${VM_IMG} )
+    VBoxManage modifyhd ${VM_IMG} --compact 
+    if [ $? = 0 ]; then
+        echo $( du -h ${VM_IMG} )
+    fi
+}
+
+function do_create_qed() {
+    IMAGE_NAME=$1
+    IMAGE_SIZE=$2
+    qemu-img create -f qed -o cluster_size=65536,table_size=0 ${IMAGE_NAME} ${IMAGE_SIZE}
+}
+
+function do_commit_kvm() {
+    echo -n "Commit ..."
+    if [ ! -f ${SESSION_IMG} ]; then
+        echo "nothing to do"
+        return 0
+    fi
+
+    SESSION_DATE=$(date +"%Y%m%d%H%M.%S")
+    NEW_SESSION=${CURRENT}/sessions/${SESSION_DATE}.img
+    
+    mkdir -p ${CURRENT}/sessions
+    pigz < ${SESSION_IMG} > ${NEW_SESSION}.gz
+
+    qemu-img commit ${SESSION_IMG} 
+    if [ $? != 0 ]; then
+        gui_log "Failed"
+        rm -f ${NEW_SESSION}.gz
+        exit 1
+    else
+        gui_log "committed ${SESSION_DATE}"
+    fi
+    rm -f ${SESSION_IMG}
+    touch ${NEW_SESSION}.gz -t ${SESSION_DATE}
+    du -h ${NEW_SESSION}.gz
+}
+
+function do_commit_vbox() {
+    echo -n "Commit ..."
+    if [ ! -f "${SESSION_IMG}" ]; then
+        echo "nothing to do"
+        return 0
+    fi
+
+    VBoxManage showvminfo vm | grep -q ": base"
+    if [ $? != 0 ]; then
+        echo "no snapshot available"
+        return 0
+    fi
+
+    SESSION_DATE=$(date +"%Y%m%d%H%M.%S")
+    NEW_SESSION=${CURRENT}/sessions/${SESSION_DATE}.img
+    
+    mkdir -p ${CURRENT}/sessions
+    pigz < ${SESSION_IMG} > ${NEW_SESSION}.gz
+
+    VBoxManage snapshot vm delete base 2>/dev/null
+    if [ $? != 0 ]; then
+        echo "Failed"
+        rm -f ${NEW_SESSION}.gz
+        exit 1
+    fi
+    rm -f ${SESSION_IMG}
+    touch ${NEW_SESSION}.gz -t ${SESSION_DATE}
+    du -h ${NEW_SESSION}.gz
+}
+
+function do_copy() {
+    VM_MAIN=$1
+    begin_long_operation
+    nice cp -p ${VM_MAIN}/vm.img ${VM_IMG}
+    nice cp -p ${VM_MAIN}/vm?*.img ${VM_IMG} 2>/dev/null
+    [ -d ${VM_MAIN}/.bios ] && nice cp -rup ${VM_MAIN}/.bios ${CURRENT}
+    for f in vm.vbox xpti.dat VirtualBox.xml compreg.dat; do
+        [ -f ${VM_MAIN}/${f} ] && cp -rup ${VM_MAIN}/${f} ${CURRENT}
+    done
+    [ -d ${VM_MAIN}/Snapshots ] && cp -rup ${VM_MAIN}/Snapshots ${CURRENT}
+    cp -rup ${VM_MAIN}/.client-test.desktop ${CURRENT}/client-test.desktop 2>/dev/null && chmod +x ${CURRENT}/*.desktop
+    cp -rup ${VM_MAIN}/.client-sync.desktop ${CURRENT}/client-sync.desktop 2>/dev/null && chmod +x ${CURRENT}/*.desktop
+    cp -rup ${VM_MAIN}/.config ${CURRENT} 
+    cp -rup ${VM_MAIN}/.setup ${CURRENT} 
+    [ -f ${VM_MAIN}/.ich9-ehci-uhci.cfg ] && cp -rup ${VM_MAIN}/.ich9-ehci-uhci.cfg ${CURRENT} 
+    update_vm_date
+    end_long_operation
+}
+            
+
+function do_subcommit_kvm() {
+    qemu-img rebase -u -b ${VM_IMG} ${SESSION_IMG}
+    nice qemu-img commit ${SESSION_IMG}
+    RESULT=$?
+    rm -f ${SESSION_IMG}
+    touch ${VM_IMG} -t ${SESSION_DATE}
+    return ${RESULT}
+}
+
+function do_subcommit_vbox() {
+    mkdir -p ${CURRENT}/Snapshots
+    VBoxManage snapshot vm take base 2>/dev/null
+    UUID=$(find ${CURRENT}/Snapshots/ -name "*.vdi" 2>/dev/null | head -n1)
+    UUID=$(basename ${UUID})
+    UUID=${UUID%.vdi}
+    echo "UUID=$UUID" 
+    rm -fR ${CURRENT}/Snapshots/*
+    mv ${SESSION_IMG} Snapshots/${UUID}.vdi
+
+    # change vdi uuid
+    python <<EOF
+
+# thanks to http://www.finefrog.com/2011/08/03/setting-the-uuid-of-a-virtualbox-vdi/
+newUuid = "${UUID}".replace('-', '').replace('{', '').replace('}', '')
+vdi="Snapshots/${UUID}.vdi"
+
+import binascii
+import struct
+import os
+
+file = open(vdi, 'r+b')
+file.seek(392, os.SEEK_SET)
+
+file.write(binascii.a2b_hex(newUuid[6] + newUuid[7]))
+file.write(binascii.a2b_hex(newUuid[4] + newUuid[5]))
+file.write(binascii.a2b_hex(newUuid[2] + newUuid[3]))
+file.write(binascii.a2b_hex(newUuid[0] + newUuid[1]))
+
+file.write(binascii.a2b_hex(newUuid[10] + newUuid[11]))
+file.write(binascii.a2b_hex(newUuid[8] + newUuid[9]))
+
+file.write(binascii.a2b_hex(newUuid[14] + newUuid[15]))
+file.write(binascii.a2b_hex(newUuid[12] + newUuid[13]))
+
+file.write(binascii.a2b_hex(newUuid[16] + newUuid[17]))
+file.write(binascii.a2b_hex(newUuid[18] + newUuid[19]))
+
+file.write(binascii.a2b_hex(newUuid[20] + newUuid[21]))
+file.write(binascii.a2b_hex(newUuid[22] + newUuid[23]))
+file.write(binascii.a2b_hex(newUuid[24] + newUuid[25]))
+file.write(binascii.a2b_hex(newUuid[26] + newUuid[27]))
+file.write(binascii.a2b_hex(newUuid[28] + newUuid[29]))
+file.write(binascii.a2b_hex(newUuid[30] + newUuid[31]))
+
+file.close()
+
+EOF
+    
+    VBoxManage snapshot vm delete base >/dev/null 2>&1
+    RESULT=$?
+
+    rm -f ${CURRENT}/Snapshots/*
+    touch ${VM_IMG} -t ${SESSION_DATE}
+    return ${RESULT}
+}
+
+function do_sync() {
+    VM_MAIN=${1%/}
+
+
+    if [ ! -d ${VM_MAIN} ]; then
+        echo "ERROR: no ${VM_MAIN} dir present"
+        exit 1
+    fi
+
+    # custom vms (no ln-vm skel)
+    if [ ! -f ${VM_MAIN}/.config ] && [ ! -f ${VM_MAIN}/.setup ]; then
+	rsync -av ${VM_MAIN}/ ${CURRENT}/
+	return 10
+    fi
+
+    update_vm_date
+    do_rollback_${VM_TYPE}
+    echo
+
+    ## restore image if not present
+    if [ -f ${DIRTY_FLAG} ] || [ ! -f ${VM_IMG} ]; then
+        echo -n "Dirty image, restore from ${VM_MAIN} ..."
+        do_copy ${VM_MAIN}
+        echo "OK"
+        return 10 # no execute code below
+    fi
+
+    ## update image if force 
+    for upd in $( find ${VM_MAIN}/sessions -newer ${FLAG_DATE} -name "*.update" -type f | sort -r ); do
+        echo -n "Forced update ${upd} ..."
+        do_copy ${VM_MAIN}
+        echo "OK"
+        return 10 # no execute code below
+    done
+
+    if [ "${VM_TYPE}" = "vbox" ]; then
+        SESSION_IMG=${CURRENT}/session.img
+    fi
+    for sess in $( find ${VM_MAIN}/sessions -newer ${FLAG_DATE} -name "*img.gz" -type f | sort ); do
+        echo -n "detected new session: " $( du -h ${sess} ) " "
+        nice pigz -d < ${sess} > ${SESSION_IMG}
+        SESSION_DATE=$( basename ${sess/.img.gz} )
+        if [ $? = 0 ]; then
+            echo -n " commit... "
+            do_subcommit_${VM_TYPE}
+            RESULT=$?
+            return $RESULT
+        else 
+            return 1 # error
+        fi
+    done
+    
+    for sess in $( find ${VM_MAIN} -newer ${CURRENT}/.config -name ".config" -type f ); do
+        echo "update .config"
+        cp -rup ${VM_MAIN}/.config ${CURRENT} 
+    done
+    for sess in $( find ${VM_MAIN} -newer ${CURRENT}/.setup -name ".setup" -type f ); do
+        echo "update .setup"
+        cp -rup ${VM_MAIN}/.setup ${CURRENT} 
+    done
+    return 10 # no more updates
+}
+
+function do_rollback_kvm() {
+    echo -n "Rollback kvm ..."
+    rm -f ${SESSION_IMG}
+}
+
+function do_rollback_vbox() {
+    echo -n "Rollback vbox ..."
+    VBoxManage snapshot vm restore base >/dev/null 2>&1
+    VBoxManage snapshot vm delete base >/dev/null 2>&1
+}
+
+function do_client_call() {
+    PID_VM=$1
+    ( sleep 2 && $0 ${XNEST} --path "${CURRENT}" --client ${PID_VM} ) &
+}
+
+function do_shutdown() {
+    PID_VM=$1
+    nc localhost ${MONITOR_PORT} -w1 > /dev/null <<EOF
+system_powerdown
+
+EOF
+    echo -n "Shutdown "
+    SEC=0
+    while [ 1 ]; do
+        SEC=$((SEC+1))
+        echo -n "."
+        ps -p ${PID_VM} >/dev/null
+        [ $? = 1 ] && break 
+        
+        [ $SEC -gt 12 ] && ( echo -n " kill forced "; kill -9 ${PID_VM} > /dev/null 2>&1 )
+        sleep 1
+    done
+    echo "OK"
+    if [ -n "${XNEST}" ]; then
+        kill ${XNEST} > /dev/null 2>&1
+    fi
+}
+
+function do_client() {
+    PID_VM=$1
+    echo "PID_VM=${PID_VM}"
+    if [ -f ${CURRENT}/.setup ]; then
+        . ${CURRENT}/.setup
+    else
+        [ -f ${CURRENT}/.config ] && . ${CURRENT}/.config
+    fi
+
+    if [ -n "${XNEST}" ]; then
+        Xnest :1 -ac > /dev/null 2>&1 &
+        XNEST=$!
+        export DISPLAY=:1
+        sleep 1
+        xsetbg -onroot -fullscreen -fit -fork -border black /usr/share/backgrounds/*.png
+        $0 --splash 50 &
+    fi
+    echo "Sleeping to wait RDP"
+    sleep 1
+
+    ncheck=0
+    while [ 1 ]; do
+        ncheck=$((ncheck+1))
+        sleep 5
+        echo -n "Running rdesktop..."
+        rdesktop ${RDESKTOP_OPTS} localhost >/dev/null 2>/dev/null
+        exit_code=$?
+        echo "n=${ncheck}, EXIT CODE RDESKTOP:${exit_code}"
+        [ $ncheck -gt 10 ] && break # too time, rdesktop cannot connect
+        [ ${exit_code} = 71 ] && continue # this is error for timeout connection
+        [ ${exit_code} = 76 ] && continue # this is error for timeout connection
+        break
+    done
+    if [ -n "${PID_VM}" ]; then
+        sleep 3
+        do_shutdown ${PID_VM}
+    fi
+}
+
+function do_splash() {
+    DURATION=$1
+ 
+    sudo plymouth quit
+    MODE=boot
+    #MODE="shutdown --debug-file=/tmp/p.log --debug"
+    sudo plymouthd --mode=${MODE}
+    sudo plymouth --show-splash
+    I=0
+    while [ 1 ]; do 
+        sudo plymouth --update=test$I
+        sleep 1
+        I=$(($I+1))
+        [ $I -ge $DURATION ] && break
+    done
+    sudo plymouth quit
+}
+
+function do_check() {
+    grep -q 'svm\|vmx' /proc/cpuinfo
+    if [ $? = 0 ]; then
+        echo "Virtualization detected"
+    else
+        echo "WARNING: no virtualization detected"
+    fi
+    echo "RAM="$( sed -n "s|^MemTotal:\s*\([0-9]*\).*$|\1|p"  /proc/meminfo )
+    echo "CPU="$( egrep "^processor" /proc/cpuinfo | wc -l )
+}
+
+function do_permissions() {
+    chown -R livenet:kvm ${CURRENT} 2>/dev/null
+    chmod -R g-w+r ${CURRENT} 2>/dev/null
+    chmod g+w ${CURRENT} 2>/dev/null
+}
+
+function export_share() {
+    echo "Found SHARE2=${SHARE2}"
+    PID=$1
+    SHARE_=$2
+
+    SAMBACONF=/tmp/qemu-smb.${PID}-0/smb.conf
+    NAME=$(basename ${SHARE_})
+    USER=$(whoami)
+
+    if [ ! -f ${SAMBACONF} ]; then
+        echo "ERROR, no ${SAMBACONF} found"
+    else
+
+    cat >> ${SAMBACONF} <<EOF
+[${NAME}]
+path=${SHARE_}
+read only=no
+guest ok=yes
+force user=${USER}
+
+EOF
+    fi
+
+
+}
+
+function audio_on() {
+    set +e
+    amixer sset 'Channel Mode' 2ch
+    amixer sset Master 100% on
+    amixer sset PCM 100% on
+    amixer sset Headphone 100% on
+    amixer sset Front 100% on
+    pacmd set-sink-mute 0 false
+    pacmd set-sink-volume 0 0x10000
+    set -e
+}
+
+function do_start_kvm() {
+    if [ ! -f ${VM_IMG} ]; then
+        echo "ERROR: no ${VM_IMG}"
+        exit 1
+    fi
+    
+    if [ -f ${DIRTY_FLAG} ]; then
+        echo "ERROR: dirty ${VM_IMG}"
+        exit 1
+    fi
+
+    if [ ! -f ${SESSION_IMG} ]; then
+        echo -n "Starting new kvm session ..."
+        qemu-img create -f qed -o cluster_size=8192 -b ${VM_IMG} ${SESSION_IMG} >/dev/null
+        chmod g+w ${SESSION_IMG}
+        echo "OK"
+    else
+        echo "Resume session"
+    fi
+
+    # half +1
+    [ -n "${SMP}" ] || SMP=$(( 1+$( egrep "^processor" /proc/cpuinfo | wc -l )/2 ))
+
+    # calculate half RAM
+    if [ -z "${RAM}" ]; then
+        RAM=$(( $( sed -n "s|^MemTotal:\s*\([0-9]*\).*$|\1|p"  /proc/meminfo )/1024/2 ))
+        if [ ${RAM} -gt 2047 ]; then
+            RAM=2047
+        fi
+    fi
+
+    KVM_OPTIONS=""
+    SHARE=${HOME}
+    if [ -f ${CURRENT}/.setup ]; then
+        . ${CURRENT}/.setup
+    else
+        [ -f ${CURRENT}/.config ] && . ${CURRENT}/.config
+    fi
+
+    i=1
+    KVM_DISKS=""
+    for vm_disk in ${CURRENT}/vm?*.img; do
+        [ -f ${vm_disk} ] || continue
+        KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qed,cache=writeback,aio=native,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
+        KVM_DISKS_LOG=" ${vm_disk}"
+        i=$(($i+1))
+    done
+
+    if [ -f ${CURRENT}/.ich9-ehci-uhci.cfg ]; then
+        USB2="-readconfig ${CURRENT}/.ich9-ehci-uhci.cfg"
+    fi
+
+    
+    if [ "${GUI}" = "spice" ]; then
+        GUIOPTS="-spice port=${SPICE_PORT},disable-ticketing,image-compression=off,jpeg-wan-compression=never,zlib-glz-wan-compression=never,playback-compression=off -global qxl-vga.vram_size=67108864 -device virtio-serial-pci -device virtserialport,chardev=spicechannel0,name=com.redhat.spice.0 -chardev spicevmc,id=spicechannel0,name=vdagent"
+        VGA=qxl
+    fi
+        
+    if [ "${GUI}" = "sdl" ] && [ "${FULLSCREEN}" = "true" ]; then
+        VM_OPTIONS="${VM_OPTIONS} -sdl -full-screen -no-frame -no-quit"
+    fi
+    if [ "${GUI}" = "headless" ]; then
+        VM_OPTIONS="${VM_OPTIONS} -vnc :9"
+        gui_wait ${GUI_DELAY} &
+    fi
+    
+    # if pulseaudio is running with another user reinitialize it
+    _PULSEUSER=$(ps -C pulseaudio -o user=)
+    if [ -n "${_PULSEUSER}" ] && [ "${_PULSEUSER}" != "$(whoami)" ]; then
+        echo "Restarting pulseaudio"
+        sudo killall pulseaudio
+    fi
+    audio_on
+
+    echo "Starting kvm with RAM=${RAM}MB, CPU=${SMP}, SOUND=${KVM_SOUND} DISKS='vm.img${KVM_DISKS_LOG}' GUI=${GUI} SHARE=${SHARE}"
+
+    kvm \
+        -name vm \
+        -usb ${USB2} ${TABLET} \
+        -machine pc,accel=kvm:tcg \
+        -L ${CURRENT}/.bios \
+        -m ${RAM} \
+        -smp ${SMP} \
+        -cpu ${CPU} \
+        -nodefaults -rtc base=localtime \
+        -drive file=${SESSION_IMG},if=none,id=virtio-disk0,format=qed,cache=${CACHE},aio=native,werror=ignore,rerror=ignore \
+        -device virtio-blk-pci,scsi=off,drive=virtio-disk0,id=disk0 \
+        ${KVM_DISKS} \
+        -drive if=none,media=cdrom,id=drive-ide0-1-0,readonly=on,format=raw${CDROM} ${FLOPPY}\
+        -device ide-drive,bus=ide.1,unit=0,drive=drive-ide0-1-0,id=ide0-1-0 \
+        -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
+        -chardev pty,id=charserial0 -device isa-serial,chardev=charserial0,id=serial0 \
+        -vga ${VGA} \
+        -k ${XKBLAYOUT:=it} \
+        -redir tcp:3389::3389 \
+        -monitor tcp:127.0.0.1:4444,server,nowait \
+        -boot d \
+        ${GUIOPTS} \
+        ${KVM_SOUND} \
+        ${USBDEVICES} \
+        ${KVM_OPTIONS} \
+        ${VM_OPTIONS} &
+    PID_VM=$!
+    echo "PID of VM:${PID_VM}"
+
+    if [ -n "${SHARE2}" ] && [ -d ${SHARE2} ]; then
+        ( sleep 2 && export_share ${PID_VM} ${SHARE2} ) &
+    fi
+
+    if [ "${GUI}" = "spice" ]; then
+        OPTS=""
+        [ "${FULLSCREEN}" = "true" ] && OPTS="${OPTS} --full-screen=auto-conf"
+        gui_wait ${GUI_DELAY}
+        ( sleep ${GUI_DELAY} && spicec -h localhost -p ${SPICE_PORT} ${OPTS} ; do_shutdown ${PID_VM} ) &
+    fi
+
+    if [ -n "${CLIENT_CALL}" ]; then
+        do_client_call ${PID_VM}
+    else
+        echo
+        #( sleep 1 && [ -x /usr/bin/xdotool ] && xdotool search --name QEMU windowsize %@  ${WIN_WIDTH} ${WIN_HEIGHT} ) &
+        #( sleep 10 && ( echo "sendkeys ctrl-alt-u" | nc localhost ${MONITOR_PORT} -w1 ) ) &
+    fi
+
+    wait ${PID_VM}
+}
+
+
+function do_start_vbox() {
+    if [ ! -f ${VM_IMG} ]; then
+        echo "ERROR: no ${VM_IMG}"
+        exit 1
+    fi
+    
+    if [ -f ${DIRTY_FLAG} ]; then
+        echo "ERROR: dirty ${VM_IMG}"
+        exit 1
+    fi
+
+    if [ ! -f "${SESSION_IMG}" ]; then
+        echo -n "Starting new vbox session ..."
+        VBoxManage snapshot vm take base 2>/dev/null
+        echo "OK"
+    else
+        echo "Resume session"
+    fi
+
+    [ -n "${SMP}" ] || SMP=$(( 1+$( egrep "^processor" /proc/cpuinfo | wc -l )/2 ))
+
+    if [ -z "${RAM}" ]; then
+        RAM=$(( $( sed -n "s|^MemTotal:\s*\([0-9]*\).*$|\1|p"  /proc/meminfo )/1024/2 ))
+        if [ ${RAM} -gt 2047 ]; then
+            RAM=2047
+        fi
+    fi
+
+    echo "Starting vbox with RAM=${RAM}MB, CPU=${SMP}"
+    sed -i 's| RAMSize=.[^\"]*| RAMSize="'${RAM}'|' ${CURRENT}/vm.vbox
+    sed -i 's|CPU count=.[^\"]*|CPU count="'${SMP}'|' ${CURRENT}/vm.vbox
+
+    rm -f ${CURRENT}/*.log*
+    rm -fR ${CURRENT}/Logs
+
+    if [ "${CLIENT_CALL}" = "true" ]; then
+        VBoxHeadless ${VM_OPTIONS_VBOX} --startvm vm &
+    else
+        if [ "${SEAMLESSMODE}" = "true" ]; then
+            gui_wait ${GUI_DELAY} &
+            VBoxManage startvm vm 
+            i=0
+            while [ $i -le 5 ]; do # minimize splash screen
+                echo search
+                WID=$(xdotool search "VM VirtualBox")
+                if [ -n "${WID}" ]; then
+                    xdotool windowunmap  ${WID}
+                    break
+                fi
+                i=$((i+1))
+                sleep 0.1
+            done
+
+            return
+        else
+            VBoxSDL ${VM_OPTIONS_VBOX} -vm vm &
+        fi
+    fi
+    
+    PID_VM=$!
+    echo "PID of VM:${PID_VM}"
+
+    [ -n "${CLIENT_CALL}" ] && do_client_call ${PID_VM}
+
+    wait ${PID_VM}
+}
+
+PROGNAME=${0##*/}
+PROGVERSION=0.1.0
+SHORTOPTS="hs:cr"
+LONGOPTS="help,sync:,compact,force-sync,rollback,commit,xnest,rdp,cdrom:,floppy:,vgastd,client:,check,splash:,usbdevice:,fullscreen,guest,path:,qed:,permissions,spice,sdl,seamless,headless"
+
+ARGS=$(getopt -s bash --options $SHORTOPTS --longoptions $LONGOPTS --name $PROGNAME -- "$@" )
+if [ $? -ne 0 ]; then
+    # bad argument
+    exit 1
+fi
+eval set -- "$ARGS"
+
+set_params
+while true; do
+   case $1 in
+    -h|--help)
+        do_help
+        exit 0
+        ;;
+    -s|--sync)
+        gui_start
+        shift
+        MASTER_ARG=$1
+        if [ "auto" != "${MASTER_ARG}" ]; then
+            MASTER=${MASTER_ARG}
+        fi
+        gui_log "Syncing from ${MASTER}"
+        while [ 1 ]; do
+            do_sync ${MASTER}
+            if [ $? != 0 ]; then
+                break
+            fi
+        done
+        rm -f ${FLAG_DATE}
+        rm -f ${SESSION_IMG}
+        #grep -q "^MASTER=" ${CURRENT}/.config || echo "MASTER=${MASTER}" >> ${CURRENT}/.config
+        grep -q "^MASTER=" ${CURRENT}/.setup || echo "MASTER=${MASTER}" >> ${CURRENT}/.setup
+        do_permissions
+        gui_stop
+        exit 0
+        ;;
+    --compact)
+        gui_start compact
+        do_compact_${VM_TYPE}
+        gui_stop
+        exit 0
+        ;;
+    --check)
+        do_check
+        exit 0
+        ;;
+    --force-sync)
+        do_force_sync
+        exit 0
+        ;;
+    --rollback)
+        gui_start
+        do_rollback_${VM_TYPE}
+        gui_log "roolback"
+        gui_stop
+        exit 0
+        ;;
+    --commit)
+        gui_start "commit"
+        do_commit_${VM_TYPE}
+        gui_stop
+        exit 0
+        ;;
+    --permissions)
+        do_permissions
+        exit 0
+        ;;
+    --xnest)
+        XNEST=--xnest
+        ;;
+    --rdp|-r)
+        do_rollback_${VM_TYPE}
+        CLIENT_CALL=true
+        VM_OPTIONS="${VM_OPTIONS} -vnc :9"
+        CACHE=${CACHE_CLIENT}
+        ;;
+    --fullscreen)
+        FULLSCREEN=true
+        VM_OPTIONS_VBOX="${VM_OPTIONS_VBOX} -nograbonclick -nohostkey -nofstoggle -fullscreen"
+        ;;
+    --guest)
+        if [ ! "${GUEST_DISABLE}" = "yes" ]; then
+            do_rollback_${VM_TYPE}
+            CACHE=${CACHE_CLIENT}
+        fi
+        ;;
+    --cdrom)
+        shift
+        CDROM=",file="$1
+        ;;
+    --floppy)
+        shift
+        FLOPPY="-fda "$1
+        ;;
+    --client)
+        shift
+        PID_VM=$1
+        do_client ${PID_VM}
+        exit 0
+        ;;
+    --splash)
+        shift
+        DURATION=$1
+        do_splash ${DURATION:=5}
+        exit 0
+        ;;
+    --vgastd)
+        VGA=std
+        ;;
+    --spice)
+        GUI=spice
+        ;;
+    --headless)
+        GUI=headless
+        ;;
+    --sdl)
+        GUI=sdl
+        ;;
+    --usbdevice)
+        shift
+        USBDEVICES="${USBDEVICES} -usbdevice host:${1}"
+        ;;
+    --seamless)
+        SEAMLESSMODE=true
+        ;;
+    --path)
+        shift
+        CURRENT=$1
+        [ -d ${CURRENT} ] || CURRENT=$(dirname ${CURRENT})
+        set_params
+        ;;
+    --qed)
+        IMAGE_NAME=tmp.img
+        shift
+        IMAGE_SIZE=$1
+        do_create_qed ${IMAGE_NAME} ${IMAGE_SIZE} 
+        echo "Image ${IMAGE_NAME} ready, maybe you have to rename it in vm.img"
+        exit 0
+        ;;
+    *)
+        shift
+        break
+        ;;
+   esac
+   shift
+done
+
+do_start_${VM_TYPE}
+exit 0

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=commit
+Comment=Macchina Virtuale
+Exec=ln-vm --path %k --commit
+Type=Application
+Categories=GTK;GNOME;Utility;
+Terminal=false
+Icon=/usr/share/icons/vm-op.png

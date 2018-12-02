@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Windows
+Comment=Macchina virtuale predefinita
+Exec=ln-vms --vm default --guest
+Icon=/usr/share/icons/vm.png
+Type=Application
