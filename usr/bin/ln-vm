@@ -35,10 +35,7 @@ RDESKTOP_OPTS="-E -f -a 16 -u user -p user -r sound:local"
 WIN_WIDTH=1024
 WIN_HEIGHT=768
 
-echo $name $master $local
-DSK=$(readlink -f $local | rev | cut -d "/" -f1 | rev) 
-#DSK=$(readlink -f $local | cut -d "/" -f 3)
-echo $DSK
+
 
 ####################
 
@@ -101,6 +98,10 @@ Student on slave vm:
 
 EOF
 }
+#echo $name $master $local
+#DSK=$(readlink -f $local | rev | cut -d "/" -f1 | rev) 
+#DSK=$(readlink -f $local | cut -d "/" -f 3)
+#echo $DSK
 
 function on_finish() {
    rm -f ${FLAG_DATE}
@@ -551,8 +552,8 @@ function do_start_kvm() {
     audio_on
 
     echo "Starting kvm with RAM=${RAM}MB, CPU=${SMP}, SOUND=${KVM_SOUND} DISKS='vm.img${KVM_DISKS_LOG}' GUI=${GUI} SHARE=${SHARE}"
-
-     HDD=/dev/$DSK
+    DSK=$(readlink -f $local | rev | cut -d "/" -f1 | rev) 
+    HDD=/dev/$DSK
 #${KVM_DISKS} \
     kvm \
         -name vm \
@@ -624,8 +625,7 @@ set_params
 while true; do
    case $1 in
     -h|--help)
-        #do_help
-        echo $PID_VM
+        do_help
         exit 0
         ;;
     -s|--sync)
