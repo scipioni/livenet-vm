@@ -37,7 +37,7 @@ function do_parse() {
         -e "s/^\(.*\)=\([^\"']*\)$/\1=\"\2\"/" \
        < $CONFIG_FILE \
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
-
+    dsks=$(echo ${dsks:1:-1} )
 }
 
 # get all update for every VM 
@@ -49,6 +49,9 @@ function do_sync() {
         [ -n "${local}" ] || continue
 
         if [ -n "${master}" ] && [ -d ${master} ]; then
+            mkdir -p /mnt/vms
+            mount -t nfs ${LIVENET_ROOT}:/livenet/vms /mnt/vms
+            losetup /dev/loop0 /mnt/vms/${name}/dsks/
             mkdir -p ${local}
             cd ${local}
             LIVENET_ROOT
@@ -70,13 +73,12 @@ function do_list() {
 function do_run() {
     options="$*"
     do_parse $name
-    echo "running $name $master $local"
-    export local
+    echo "running $name $master $dsks"
+    export dsks
     export master
     export name
-    ls ${local}
-    if [ $? != 0 ]; then
-        echo "ERROR: no $local or ${master} found"
+    if [ -z "${dsks}" ]; then
+        echo "ERROR: no disk $local or remote disk ${master} found"
     fi 
     ${vmlauncher} ${options}
 }
