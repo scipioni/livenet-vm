@@ -40,25 +40,52 @@ function do_parse() {
     dsks=$(echo ${dsks:1:-1} )
 }
 
-# get all update for every VM 
+# get all VM 
 function do_sync() {
     SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
-    for SECTION in ${SECTIONS}; do
-        do_parse ${SECTION}
-        [ "${update}" = "true" ] || continue
-        [ -n "${local}" ] || continue
 
-        if [ -n "${master}" ] && [ -d ${master} ]; then
-            mkdir -p /mnt/vms
-            mount -t nfs ${LIVENET_ROOT}:/livenet/vms /mnt/vms
-            losetup /dev/loop0 /mnt/vms/${name}/dsks/
-            mkdir -p ${local}
-            cd ${local}
-            LIVENET_ROOT
-            nice ln-vm --sync ${master}
+    #if dataset rpool/vms does not exist, create it
+    if [ "$(zfs list -o name | grep rpool/vms | wc -l)" -lt "1"]; then
+        echo "create rpool/vms"
+        zfs create rpool/vms
+    else
+        #list of available ZVOL for vms disks. Chek
+        ZFS_DONE=$(zfs list -o name | grep rpool/vms | tail -n +2)
+        if [ "$(zfs list -o name | grep rpool/vms | tail -n +2)" -gt "0"]; then
+            for z in ${ZFS_DONE}; do
+                for SECTION in ${SECTIONS}; do
+                    do_parse ${SECTION}
+                    for dsk in $(echo $dsks | sed "s/,/ /g"); do
+                        if [ "$(echo ${z} | cut -d '/' -f 3)" == "${dsk}"]; then
+                            echo "check of update of ${dsk}"
+                            update_vol $dsk
+                        else
+                            zfs destroy -r ${z}}
+                        fi
+                    done
+                done
+            done
+        else
+            for SECTION in ${SECTIONS}; do
+                do_parse ${SECTION}
+                for dsk in $(echo $dsks | sed "s/,/ /g"); do
+                     ssh tecnici@${LIVENET_ROOT} 'ln-sendvm --send ${dsk}' | pv | sudo zfs receive rpool/vms/${dsk}
+                done
+            done
+
         fi
-    done
+
+    fi 
+
 }
+
+function update_vol(){
+    vol=$1
+    
+
+
+}
+
 
 function do_list() {
     SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
