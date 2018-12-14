@@ -251,19 +251,19 @@ while true; do
 done
     
 
-#if [ -n "${XSESSION}" ]; then
-#    ratpoison -f /etc/ratpoisonrc &
-#    wmpid=$!
-#    if [ -n "${RDP}" ]; then
-#        do_setbg
-#        for i in $( seq 10 10 100 ); do
-#            sleep 2
-#            echo $i
-#        done #| zenity --progress --no-cancel --auto-close --width 400 --text "Attendere ..." &
-#    fi#
-#
-#    ( do_run ${OPTIONS} ; killall ratpoison ) &
-#    wait $wmpid # wait until ratpoison is closed after do_run
-#else
-#    do_run ${OPTIONS}
-#fi
+if [ -n "${XSESSION}" ]; then
+   ratpoison -f /etc/ratpoisonrc &
+   wmpid=$!
+   if [ -n "${RDP}" ]; then
+       do_setbg
+       for i in $( seq 10 10 100 ); do
+           sleep 2
+           echo $i
+       done | zenity --progress --no-cancel --auto-close --width 400 --text "Attendere ..." &
+   fi#
+
+   ( do_run ${OPTIONS} ; killall ratpoison ) &
+   wait $wmpid # wait until ratpoison is closed after do_run
+else
+   do_run ${OPTIONS}
+fi
