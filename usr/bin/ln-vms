@@ -71,7 +71,7 @@ function do_sync() {
                             if [ "${force}" == "true" ]; then
 				echo $LIVENET_ROOT
 				echo "arrivo a forza per clonaere $hope_dsk"
-                                ssh tecnici@${LIVENET_ROOT} 'ln-sendvm --send ${hope_dsk}' | pv | sudo zfs receive rpool/vms/${dsk}
+                                ssh tecnici@${LIVENET_ROOT} "ln-sendvm --send ${hope_dsk}" | pv | sudo zfs receive rpool/vms/${hope_dsk}
                             else
 				echo "aggiorno $hope_dsk $name" 
                                 update_vol $hope_dsk $name
@@ -90,7 +90,7 @@ function do_sync() {
 		     echo $LIVENET_ROOT
 		     echo $dsk
 		     hope_dsk=${dsk##*/}
-                     ssh tecnici@${LIVENET_ROOT} 'ln-sendvm --send ${hope_dsk}' | pv | sudo zfs receive rpool/vms/${dsk}
+                     ssh tecnici@${LIVENET_ROOT} "ln-sendvm --send ${hope_dsk}" | pv | sudo zfs receive rpool/vms/${dsk}
                 done
             done
 
