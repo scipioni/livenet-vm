@@ -516,16 +516,17 @@ function do_start_kvm() {
     set -x
     i=0
     KVM_DISKS=""
-    
-    if [ "${master}"=true ]; then
-        for vm_disk in $(ls /dev/disk/by-path/ | grep vm0003 | grep -v part)
-        do
-            vm_disk=$(readlink -f /dev/disk/by-path/${vm_disk})
-            KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=virtio,index=${i},format=raw,cache=writeback,werror=ignore,rerror=ignore"
-            KVM_DISKS_LOG=" ${vm_disk}"
-            i=$(($i+1))
-        done
-    else
+    set -x
+    master=false
+    # if [ "${master}"=true ]; then
+    #     for vm_disk in $(ls /dev/disk/by-path/ | grep vm0003 | grep -v part)
+    #     do
+    #         vm_disk=$(readlink -f /dev/disk/by-path/${vm_disk})
+    #         KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=virtio,index=${i},format=raw,cache=writeback,werror=ignore,rerror=ignore"
+    #         KVM_DISKS_LOG=" ${vm_disk}"
+    #         i=$(($i+1))
+    #     done
+    # else
         for vm_disk in $(echo $dsks | sed "s/,/ /g")
         do
             vm_disk=/dev/$(readlink -f ${vm_disk} | rev | cut -d "/" -f1 | rev)
@@ -533,7 +534,7 @@ function do_start_kvm() {
             KVM_DISKS_LOG=" ${vm_disk}"
             i=$(($i+1))
         done
-    fi
+    #fi
     if [ -f ${CURRENT}/.ich9-ehci-uhci.cfg ]; then
         USB2="-readconfig ${CURRENT}/.ich9-ehci-uhci.cfg"
     fi

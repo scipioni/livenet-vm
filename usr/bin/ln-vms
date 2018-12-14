@@ -29,7 +29,7 @@ EOF
 set -x
 function do_parse() {
     SECTION=$1
-    unset name master update local
+    unset name master update dsks local
     eval $( sed -e 's/[[:space:]]*\=[[:space:]]*/=/g' \
         -e 's/;.*$//' \
         -e 's/[[:space:]]*$//' \
@@ -65,7 +65,7 @@ function do_list() {
     for SECTION in ${SECTIONS}; do
         echo "[${SECTION}]"
         do_parse ${SECTION}
-        echo "  name=${name} master=${master} local=${local} update=${update}"  
+        echo "  name=${name} master=${master} disks=${dsks} update=${update}"  
     done
 }
 
