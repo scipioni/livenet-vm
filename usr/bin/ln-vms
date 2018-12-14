@@ -42,6 +42,7 @@ function do_parse() {
 
 # get all VM 
 function do_sync() {
+    force=$1
     SECTIONS=$( sed -n -e "s/^\[\(\w\+\)\].*/\1/p" < ${CONFIG_FILE} )
 
     #if dataset rpool/vms does not exist, create it
@@ -58,9 +59,13 @@ function do_sync() {
                     for dsk in $(echo $dsks | sed "s/,/ /g"); do
                         if [ "$(echo ${z} | cut -d '/' -f 3)" == "${dsk}"]; then
                             echo "check of update of ${dsk}"
-                            update_vol $dsk
+                            if ["${force}"=="true"]; then
+                                ssh tecnici@${LIVENET_ROOT} 'ln-sendvm --send ${dsk}' | pv | sudo zfs receive rpool/vms/${dsk}
+                            else
+                                update_vol $dsk $name
+                            fi
                         else
-                            zfs destroy -r ${z}}
+                            zfs destroy -r ${z}
                         fi
                     done
                 done
@@ -81,9 +86,39 @@ function do_sync() {
 
 function update_vol(){
     vol=$1
+    name=$2
+    if ping -c 1 ${LIVENET_ROOT} &> /dev/null
+    then
+        mount -t nfs ${LIVENET_ROOT}:/livenet/vms_update /mnt/update
+        #get latest snapshot of local volume
+        LAST=$(zfs list -o name -t snapshot | grep ${vol} | tail -1)
+        
+        LAST_SNAP_TS=$(echo ${LAST} | cut -d '@' -f 2)
+        #apply all newer snapshot 
+        for UPDATE_FILE in `ls /mnt/${name}/*.gz | sort`; do
+            #get without extension
+            NUMBERVALUE=$(echo ${UPDATE_FILE} | cut -d '.' -f 1 )
+            NUMBERVALUE=${NUMBERVALUE##*/}
+            if test "${NUMBERVALUE}" ">" "${LAST_SNAP_TS}"; then
+                        start_time=$(date +%s)
+                        zcat "${UPDATE_FILE}" | zfs receive -F rpool/vms/${vol}
+                        #presuppongo che se zfs receive fallisce vale l'ultimo
+                        end_time=$(date +%s)
+                        #sleep 1
+                        LAST_SNAP=$(zfs list -t snapshot -o name -s creation | grep ${vol} | tail -1)
+                        LAST_SNAP_TS=$(echo $LAST_SNAP | cut -d '@' -f 2)
+                        #echo "The system have install ${UPDATE_FILE} on the volume ${ROOT_VOLUME}, the most recent snapshot of the volume is ${LAST_SNAP}"
+                        echo "  elapsed time: $(( $((end_time - start_time)) )) sec."
+                        echo "Install next update"
+                        #sleep 1
+            fi
+        done
+        end_time_all=$(date +%s)
+        #if fail reclone
+    else
+        exit 1
+    fi
     
-
-
 }
 
 
