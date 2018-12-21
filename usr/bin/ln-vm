@@ -700,7 +700,7 @@ function do_start_kvm() {
         OPTS=""
         [ "${FULLSCREEN}" = "true" ] && OPTS="${OPTS} --full-screen=auto-conf"
         gui_wait ${GUI_DELAY}
-        ( sleep ${GUI_DELAY} && spicec -h localhost -p ${SPICE_PORT} ${OPTS} ; do_shutdown ${PID_VM} ) &
+        ( sleep ${GUI_DELAY} && spicy -h localhost -p ${SPICE_PORT} ${OPTS} ; do_shutdown ${PID_VM} ) &
     fi
 
     if [ -n "${CLIENT_CALL}" ]; then
