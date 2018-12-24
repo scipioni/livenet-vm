@@ -5,9 +5,10 @@ vmlauncher=ln-vm
 FLAGLONGOP=/tmp/.vms_sync
 
 . /etc/livenet/livenet.conf
-for CONFIG_FILE in vms.conf /etc/livenet/vms.conf; do
-    [ -f ${CONFIG_FILE} ] && break
-done
+
+#for CONFIG_FILE in vms.conf /etc/livenet/vms.conf; do
+#    [ -f ${CONFIG_FILE} ] && break
+#done
 
 function do_help {
 cat <<EOF
@@ -22,7 +23,7 @@ EOF
 
 function do_parse() {
     SECTION=$1
-    unset name master update local
+    unset name master update dsks
     eval $( sed -e 's/[[:space:]]*\=[[:space:]]*/=/g' \
         -e 's/;.*$//' \
         -e 's/[[:space:]]*$//' \
@@ -30,6 +31,11 @@ function do_parse() {
         -e "s/^\(.*\)=\([^\"']*\)$/\1=\"\2\"/" \
        < $CONFIG_FILE \
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
+    dsks=$(echo ${dsks:1:-1} )
+    export  name
+    export master
+    export update
+    export dsks
 }
 
 function do_sync() {
@@ -44,7 +50,7 @@ function do_sync() {
             cd ${local}
             nice ln-vm --sync ${master}
         fi
-    done
+    done    
 }
 
 function do_list() {
@@ -59,8 +65,11 @@ function do_list() {
 
 function do_run() {
     options="$*"
+    echo $options
     echo "running $name"
+    do_parse $name
     cd ${local}
+    echo $local
     if [ $? != 0 ]; then
         echo "ERROR: no $local or ${master} found"
     fi 
@@ -152,6 +161,7 @@ done
     
 
 if [ -n "${XSESSION}" ]; then
+    echo "run with ratpoison"
     ratpoison -f /etc/ratpoisonrc &
     wmpid=$!
     if [ -n "${RDP}" ]; then
@@ -165,6 +175,8 @@ if [ -n "${XSESSION}" ]; then
     ( do_run ${OPTIONS} ; killall ratpoison ) &
     wait $wmpid # wait until ratpoison is closed after do_run
 else
+    echo "run without ratpoison"
+    echo ${XSESSION}
     do_run ${OPTIONS}
 fi
 
