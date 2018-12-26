@@ -148,7 +148,7 @@ function set_params_kvm() {
     echo "running kvm"
     echo $name
     echo $dsks
-    VM_IMG=$name
+    VM_IMG=/livenet/vms/101/win10-ein.qcow2
     SESSION_IMG=${CURRENT}/.session.img
     VM_OPTIONS=""
     VM_OPTIONS_VBOX=""
@@ -159,7 +159,7 @@ function set_params_kvm() {
 
 
 function set_params() {
-    [ -n "${CURRENT}" ] || CURRENT=/livenet/vms
+    [ -n "${CURRENT}" ] || CURRENT=$HOME
     VM_TYPE=kvm
     if [ -f ${CURRENT}/.setup ]; then
         . ${CURRENT}/.setup
@@ -474,15 +474,14 @@ function do_start_kvm() {
     #     exit 1
     # fi
 
-    # if [ ! -f ${SESSION_IMG} ]; then
-    #     echo -n "Starting new kvm session ..."
-    #     qemu-img create -f qed -o cluster_size=8192 -b ${VM_IMG} ${SESSION_IMG} >/dev/null
-    #     chmod g+w ${SESSION_IMG}
-    #     echo "OK"
-    # else
-    #     echo "Resume session"
-    # fi
-
+    if [ ! -f ${SESSION_IMG} ]; then
+         echo -n "Starting new kvm session ..."
+         qemu-img create -f qcow2 -o cluster_size=8192 -b ${VM_IMG} ${SESSION_IMG} >/dev/null
+         chmod g+w ${SESSION_IMG}
+         echo "OK"
+    else
+         echo "Resume session"
+    fi
     # half +1
     [ -n "${SMP}" ] || SMP=$(( 1+$( egrep "^processor" /proc/cpuinfo | wc -l )/2 ))
 
@@ -502,9 +501,9 @@ function do_start_kvm() {
         [ -f ${CURRENT}/.config ] && . ${CURRENT}/.config
     fi
 
-    i=0
+    i=1
     KVM_DISKS=""
-    CURRENT=/livenet/vms
+    CURRENT=$HOME
     for vm_disk in ${CURRENT}/*.qcow2; do
         [ -f ${vm_disk} ] || continue
         KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qcow2,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
@@ -539,8 +538,7 @@ function do_start_kvm() {
     # audio_on
 
     echo "Starting kvm with RAM=${RAM}MB, CPU=${SMP}, SOUND=${KVM_SOUND} DISKS='${KVM_DISKS_LOG}' GUI=${GUI} SHARE=${SHARE}"
-        #-drive file=${SESSION_IMG},if=none,id=virtio-disk0,format=qed,cache=${CACHE},aio=native,werror=ignore,rerror=ignore \
-        #-device virtio-blk-pci,scsi=off,drive=virtio-disk0,id=disk0 \
+        #
         #     -drive if=none,media=cdrom,id=drive-ide0-1-0,readonly=on,format=raw${CDROM} ${FLOPPY}\
         # -device ide-drive,bus=ide.1,unit=0,drive=drive-ide0-1-0,id=ide0-1-0 \
     kvm \
@@ -549,8 +547,10 @@ function do_start_kvm() {
         -machine pc,accel=kvm:tcg \
         -m ${RAM} \
         -smp ${SMP} \
-        -cpu ${CPU} \
+        -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
         -nodefaults -rtc base=localtime \
+        -drive file=${SESSION_IMG},if=none,id=virtio-disk0,format=qcow2,cache=${CACHE},werror=ignore,rerror=ignore \
+        -device virtio-blk-pci,scsi=off,drive=virtio-disk0,id=disk0 \
         ${KVM_DISKS} \
         -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
         -chardev pty,id=charserial0 -device isa-serial,chardev=charserial0,id=serial0 \
