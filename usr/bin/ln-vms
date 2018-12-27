@@ -23,7 +23,7 @@ EOF
 
 function do_parse() {
     SECTION=$1
-    unset name master update dsks
+    unset name description master update local dsks
     eval $( sed -e 's/[[:space:]]*\=[[:space:]]*/=/g' \
         -e 's/;.*$//' \
         -e 's/[[:space:]]*$//' \
@@ -32,7 +32,8 @@ function do_parse() {
        < $CONFIG_FILE \
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
     dsks=$(echo ${dsks:1:-1} )
-    export  name
+    export name
+    export description
     export master
     export update
     export dsks
@@ -65,11 +66,9 @@ function do_list() {
 
 function do_run() {
     options="$*"
-    echo $options
-    echo "running $name"
     do_parse $name
+    echo "running vm image: ${name}, description: ${description}"
     cd ${local}
-    echo $local
     if [ $? != 0 ]; then
         echo "ERROR: no $local or ${master} found"
     fi 
@@ -176,7 +175,6 @@ if [ -n "${XSESSION}" ]; then
     wait $wmpid # wait until ratpoison is closed after do_run
 else
     echo "run without ratpoison"
-    echo ${XSESSION}
     do_run ${OPTIONS}
 fi
 

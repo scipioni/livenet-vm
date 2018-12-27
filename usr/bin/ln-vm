@@ -13,7 +13,7 @@ FLAG_DATE=/tmp/.flag_newer.$$
 CACHE=unsafe
 
 # max performance on client
-CACHE_CLIENT=unsafe
+CACHE_CLIENT=writeback
 
 GUI=sdl
 GUI_DELAY=10
@@ -136,6 +136,7 @@ function gui_stop() {
 }
 
 function update_vm_date() {
+    set -x
     [ -f ${VM_IMG} ] || return
     TSTAMP=$(stat -c "%Y" ${VM_IMG})
     TSTAMP=$(( $TSTAMP + 2 )) # soglia necessaria
@@ -146,9 +147,7 @@ function update_vm_date() {
 
 function set_params_kvm() {
     echo "running kvm"
-    echo $name
-    echo $dsks
-    VM_IMG=/livenet/vms/101/win10-ein.qcow2
+    VM_IMG=$dsks
     SESSION_IMG=${CURRENT}/.session.img
     VM_OPTIONS=""
     VM_OPTIONS_VBOX=""
@@ -187,7 +186,7 @@ function do_force_sync() {
 
 function do_compact_kvm() {
     gui_log "Compact kvm from: "$( du -h ${VM_IMG} )
-    qemu-img convert -p -O qed -o cluster_size=65536 ${VM_IMG} ${VM_IMG}.tmp
+    qemu-img convert -p -O qcow2 -o cluster_size=65536 ${VM_IMG} ${VM_IMG}.tmp
     if [ $? = 0 ]; then
         mv ${VM_IMG}.tmp ${VM_IMG}
         gui_log "Final size: "$( du -h ${VM_IMG} )
@@ -197,7 +196,7 @@ function do_compact_kvm() {
 function do_create_qed() {
     IMAGE_NAME=$1
     IMAGE_SIZE=$2
-    qemu-img create -f qed -o cluster_size=65536,table_size=0 ${IMAGE_NAME} ${IMAGE_SIZE}
+    qemu-img create -f qcow2 -o cluster_size=65536,table_size=0 ${IMAGE_NAME} ${IMAGE_SIZE}
 }
 
 function do_commit_kvm() {
@@ -408,6 +407,10 @@ function do_splash() {
     sudo plymouth quit
 }
 
+##
+# check if your system have all systems required for running vm
+#
+##
 function do_check() {
     grep -q 'svm\|vmx' /proc/cpuinfo
     if [ $? = 0 ]; then
@@ -419,6 +422,10 @@ function do_check() {
     echo "CPU="$( egrep "^processor" /proc/cpuinfo | wc -l )
 }
 
+
+##
+# Assing permission to directory
+##
 function do_permissions() {
     chown -R livenet:kvm ${CURRENT} 2>/dev/null
     chmod -R g-w+r ${CURRENT} 2>/dev/null
@@ -464,15 +471,16 @@ function audio_on() {
 }
 
 function do_start_kvm() {
-    # if [ ! -f ${VM_IMG} ]; then
-    #     echo "ERROR: no ${VM_IMG}"
-    #     exit 1
-    # fi
+    set -x
+     if [ ! -f ${VM_IMG} ]; then
+         echo "ERROR: no ${VM_IMG}"
+         exit 1
+    fi
     
-    # if [ -f ${DIRTY_FLAG} ]; then
-    #     echo "ERROR: dirty ${VM_IMG}"
-    #     exit 1
-    # fi
+    if [ -f ${DIRTY_FLAG} ]; then
+         echo "ERROR: dirty ${VM_IMG}"
+         exit 1
+    fi
 
     if [ ! -f ${SESSION_IMG} ]; then
          echo -n "Starting new kvm session ..."
@@ -482,15 +490,17 @@ function do_start_kvm() {
     else
          echo "Resume session"
     fi
+
+    # assign numbers of cores
     # half +1
     [ -n "${SMP}" ] || SMP=$(( 1+$( egrep "^processor" /proc/cpuinfo | wc -l )/2 ))
 
     # calculate half RAM
     if [ -z "${RAM}" ]; then
         RAM=$(( $( sed -n "s|^MemTotal:\s*\([0-9]*\).*$|\1|p"  /proc/meminfo )/1024/2 ))
-        if [ ${RAM} -gt 2047 ]; then
-            RAM=2047
-        fi
+        #if [ ${RAM} -gt 6000 ]; then
+        #    RAM=4096
+        #fi
     fi
 
     KVM_OPTIONS=""
@@ -504,7 +514,7 @@ function do_start_kvm() {
     i=1
     KVM_DISKS=""
     CURRENT=$HOME
-    for vm_disk in ${CURRENT}/*.qcow2; do
+    for vm_disk in ${CUURENT}/*.img; do
         [ -f ${vm_disk} ] || continue
         KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qcow2,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
         KVM_DISKS_LOG=" ${vm_disk}"
@@ -515,7 +525,6 @@ function do_start_kvm() {
         USB2="-readconfig ${CURRENT}/.ich9-ehci-uhci.cfg"
     fi
 
-    
     if [ "${GUI}" = "spice" ]; then
         GUIOPTS="-spice port=${SPICE_PORT},disable-ticketing,image-compression=off,jpeg-wan-compression=never,zlib-glz-wan-compression=never,playback-compression=off -global qxl-vga.vram_size=67108864 -device virtio-serial-pci -device virtserialport,chardev=spicechannel0,name=com.redhat.spice.0 -chardev spicevmc,id=spicechannel0,name=vdagent"
         VGA=qxl
@@ -552,11 +561,10 @@ function do_start_kvm() {
         -drive file=${SESSION_IMG},if=none,id=virtio-disk0,format=qcow2,cache=${CACHE},werror=ignore,rerror=ignore \
         -device virtio-blk-pci,scsi=off,drive=virtio-disk0,id=disk0 \
         ${KVM_DISKS} \
-        -netdev user,id=hostnet0,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
+        -netdev user,id=hostnet0,hostfwd=tcp::3389-:3389,smb=${SHARE} -device virtio-net-pci,netdev=hostnet0,id=net0,mac=52:54:00:fe:e2:63,romfile= \
         -chardev pty,id=charserial0 -device isa-serial,chardev=charserial0,id=serial0 \
         -vga ${VGA} \
         -k ${XKBLAYOUT:=it} \
-        -redir tcp:3389::3389 \
         -monitor tcp:127.0.0.1:4444,server,nowait \
         -boot d \
         ${GUIOPTS} \
