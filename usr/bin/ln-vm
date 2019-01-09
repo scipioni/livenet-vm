@@ -185,12 +185,13 @@ function do_force_sync() {
 }
 
 function do_compact_kvm() {
-    gui_log "Compact kvm from: "$( du -h ${VM_IMG} )
-    qemu-img convert -p -O qcow2 -o cluster_size=65536 ${VM_IMG} ${VM_IMG}.tmp
-    if [ $? = 0 ]; then
-        mv ${VM_IMG}.tmp ${VM_IMG}
-        gui_log "Final size: "$( du -h ${VM_IMG} )
-    fi
+    echo $VM_IMG
+    # gui_log "Compact kvm from: "$( du -h ${VM_IMG} )
+    # qemu-img convert -p -O qcow2 -o cluster_size=65536 ${VM_IMG} ${VM_IMG}.tmp
+    # if [ $? = 0 ]; then
+    #     mv ${VM_IMG}.tmp ${VM_IMG}
+    #     gui_log "Final size: "$( du -h ${VM_IMG} )
+    # fi
 }
 
 function do_create_qed() {
@@ -514,7 +515,7 @@ function do_start_kvm() {
     i=1
     KVM_DISKS=""
     CURRENT=$HOME
-    for vm_disk in ${CUURENT}/*.img; do
+    for vm_disk in ${CUURENT}/*.qcow2; do
         [ -f ${vm_disk} ] || continue
         KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qcow2,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
         KVM_DISKS_LOG=" ${vm_disk}"
@@ -642,9 +643,9 @@ while true; do
         exit 0
         ;;
     --compact)
-        gui_start compact
+#        gui_start compact
         do_compact_${VM_TYPE}
-        gui_stop
+       # gui_stop
         exit 0
         ;;
     --check)
