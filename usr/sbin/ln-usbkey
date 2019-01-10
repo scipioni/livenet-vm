@@ -94,11 +94,9 @@ do_vbox_usb() {
 do_kvm_usb_raw() {
     VendorID=$1
     ProductID=$2
-    nc localhost ${MONITOR_PORT} -w1 <<EOF
+    echo 'device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}'
+    echo 'device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}' | nc localhost ${MONITOR_PORT} -w1
 
-device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}
-
-EOF
     [ $? = 0 ] && do_notify &
 }
 

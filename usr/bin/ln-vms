@@ -22,8 +22,9 @@ EOF
 }
 
 function do_parse() {
+    
     SECTION=$1
-    unset name description master update local dsks
+    unset name description master update local 
     eval $( sed -e 's/[[:space:]]*\=[[:space:]]*/=/g' \
         -e 's/;.*$//' \
         -e 's/[[:space:]]*$//' \
@@ -31,12 +32,8 @@ function do_parse() {
         -e "s/^\(.*\)=\([^\"']*\)$/\1=\"\2\"/" \
        < $CONFIG_FILE \
         | sed -n -e "/^\[$SECTION\]/,/^\s*\[/{/^[^;].*\=.*/p;}" )
-    dsks=$(echo ${dsks:1:-1} )
-    export name
-    export description
-    export master
-    export update
-    export dsks
+    #dsks=$(echo ${dsks:1:-1} )
+   echo $name $local    
 }
 
 function do_sync() {
@@ -72,7 +69,9 @@ function do_run() {
     if [ $? != 0 ]; then
         echo "ERROR: no $local or ${master} found"
     fi 
+
     ${vmlauncher} ${options}
+
 }
 
 PROGNAME=${0##*/}

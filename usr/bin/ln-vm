@@ -147,7 +147,7 @@ function update_vm_date() {
 
 function set_params_kvm() {
     echo "running kvm"
-    VM_IMG=$dsks
+    VM_IMG=${CURRENT}/vm.img
     SESSION_IMG=${CURRENT}/.session.img
     VM_OPTIONS=""
     VM_OPTIONS_VBOX=""
@@ -156,9 +156,9 @@ function set_params_kvm() {
 }
 
 
-
 function set_params() {
-    [ -n "${CURRENT}" ] || CURRENT=$HOME
+    [ -n "${CURRENT}" ] || CURRENT=$(pwd)
+    echo $CURRENT
     VM_TYPE=kvm
     if [ -f ${CURRENT}/.setup ]; then
         . ${CURRENT}/.setup
@@ -272,7 +272,7 @@ function do_sync() {
 
     update_vm_date
     do_rollback_${VM_TYPE}
-    echo
+    
 
     ## restore image if not present
     if [ -f ${DIRTY_FLAG} ] || [ ! -f ${VM_IMG} ]; then
@@ -472,7 +472,6 @@ function audio_on() {
 }
 
 function do_start_kvm() {
-    set -x
      if [ ! -f ${VM_IMG} ]; then
          echo "ERROR: no ${VM_IMG}"
          exit 1
@@ -482,7 +481,7 @@ function do_start_kvm() {
          echo "ERROR: dirty ${VM_IMG}"
          exit 1
     fi
-
+    echo xxx
     if [ ! -f ${SESSION_IMG} ]; then
          echo -n "Starting new kvm session ..."
          qemu-img create -f qcow2 -o cluster_size=8192 -b ${VM_IMG} ${SESSION_IMG} >/dev/null
@@ -503,7 +502,7 @@ function do_start_kvm() {
         #    RAM=4096
         #fi
     fi
-
+    
     KVM_OPTIONS=""
     SHARE=${HOME}
     if [ -f ${CURRENT}/.setup ]; then
@@ -514,8 +513,7 @@ function do_start_kvm() {
 
     i=1
     KVM_DISKS=""
-    CURRENT=$HOME
-    for vm_disk in ${CUURENT}/*.qcow2; do
+    for vm_disk in ${CURRENT}/vm?*.img; do
         [ -f ${vm_disk} ] || continue
         KVM_DISKS="${KVM_DISKS} -drive file=${vm_disk},if=none,id=virtio-disk${i},format=qcow2,werror=ignore,rerror=ignore -device virtio-blk-pci,scsi=off,drive=virtio-disk${i},id=disk${i}"
         KVM_DISKS_LOG=" ${vm_disk}"
