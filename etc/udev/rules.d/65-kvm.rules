@@ -1,0 +1,11 @@
+# grant kvm group to access raw usb
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", GROUP="kvm"
+SUBSYSTEM=="usb_device", GROUP="kvm"
+#ID_BUS=="usb", GROUP="kvm"
+
+# call livenet wrapper to grab usb key into VM
+DRIVERS=="usb-storage", RUN+="/usr/sbin/ln-usbkey %p"
+ACTION=="remove", ENV{ID_USB_DRIVER}=="usb-storage", RUN+="/usr/sbin/ln-usbkey %p --remove"
+
+
+

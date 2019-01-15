@@ -4,20 +4,10 @@
 USBPATH=$1
 MONITOR_PORT=4444
 COMMAND=$2
+#set -x 
+LOG=/tmp/scriptusb.log
 
-set -x
-
-LOG_FILE="/tmp/script.log"
-
-touch $LOG_FILE
-
-# Open standard out at `$LOG_FILE` for write.
-# This has the effect 
-exec 1>$LOG_FILE
-
-# Redirect standard error to standard out such that 
-# standard error ends up going to wherever standard
-# out goes (the file).
+exec 1>>$LOG
 exec 2>&1
 
 log() {
@@ -107,12 +97,14 @@ do_vbox_usb() {
 }
 
 do_kvm_usb_raw() {
-    VendorID=$1
-    ProductID=$2
-    echo 'device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}'
-    echo 'device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}' | nc localhost ${MONITOR_PORT} -w1
+   set -x
+   VendorID=$1
+   ProductID=$2
+   echo "device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID}" 
+   su -s /bin/bash -c "echo device_add usb-host,vendorid=0x${VendorID},productid=0x${ProductID} | nc localhost 4444 -w1 "
 
-    [ $? = 0 ] && do_notify &
+   [ $? = 0 ] && do_notify &
+
 }
 
 do_kvm_usb_fs() {
@@ -152,7 +144,7 @@ do_kvm_usb_fs() {
 }
 
 
-USER=$( ps -C ln-vm -o user= )
+USER=$( ps -C ratpoison -o user= )
 if [ "${USER}" = "ssm" ]; then
     if [ "${COMMAND}" = "--remove" ]; then
         umount -f ${DEVNAME} > /dev/null 2>&1
@@ -196,19 +188,19 @@ else
 fi
 
 [ "${COMMAND}" = "--remove" ] && exit 0
-echo $USB_FS >> /tmp/script.log
+
 if [ "${USB_FS}" = "true" ]; then
-    echo ${DEVTYPE} >> /tmp/script.log
     [ "${DEVTYPE}" = "partition" ] || [ "${DEVTYPE}" = "disk" ] || exit 0
     log "detected VM:${VM} in USB_FS mode"
     [ "${VM}" = "kvm" ] && do_kvm_usb_fs
     exit 0
 fi
-    
+set -x
 if [ "${DEVTYPE}" = "disk" ] && [ -n "${ID_VENDOR_ID}" ] && [ -n "${ID_MODEL_ID}" ]; then
     log "usb grabbing PATH=${USBPATH} VendorID=${ID_VENDOR_ID} ProductID=${ID_MODEL_ID}"
 
     [ "${VM}" = "kvm" ] && do_kvm_usb_raw ${ID_VENDOR_ID} ${ID_MODEL_ID}
     [ "${VM}" = "vbox" ] && do_vbox_usb
+
 fi
 exit 0
