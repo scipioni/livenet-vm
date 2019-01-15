@@ -600,7 +600,7 @@ function do_start_kvm() {
 PROGNAME=${0##*/}
 PROGVERSION=0.1.0
 SHORTOPTS="hs:cr"
-LONGOPTS="help,sync:,compact,force-sync,rollback,commit,xnest,rdp,cdrom:,floppy:,vgastd,client:,check,splash:,usbdevice:,fullscreen,guest,path:,qed:,permissions,spice,sdl,seamless,headless"
+LONGOPTS="help,sync:,memory-clean,compact,force-sync,rollback,commit,xnest,rdp,cdrom:,floppy:,vgastd,client:,check,splash:,usbdevice:,fullscreen,guest,path:,qed:,permissions,spice,sdl,seamless,headless"
 
 ARGS=$(getopt -s bash --options $SHORTOPTS --longoptions $LONGOPTS --name $PROGNAME -- "$@" )
 
@@ -638,6 +638,11 @@ while true; do
         grep -q "^MASTER=" ${CURRENT}/.setup || echo "MASTER=${MASTER}" >> ${CURRENT}/.setup
         do_permissions
         gui_stop
+        exit 0
+        ;;
+    --memory-clean)
+        sudo sync
+        sudo sysctl vm.drop_caches=3
         exit 0
         ;;
     --compact)
